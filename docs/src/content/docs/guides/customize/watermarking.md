@@ -1,214 +1,230 @@
 ---
 title: Text watermarking
-description: Opt-in SynthID-Text tournament sampling, detection, and implementation limits.
+description: Select library watermark schemes through Rust, Python, and HTTP, with CPU and GPU sampling integration.
 ---
 
-mistral.rs supports opt-in **SynthID-Text tournament sampling** for generated text.
-[Anthropic identifies its text watermark as a version of SynthID-Text](https://www.anthropic.com/news/claude-text-watermark).
-This implementation uses the published two-candidate tournament algorithm with an
-independent keyed hash. It does not reproduce Anthropic's private keys, parameters,
-or detector, and does not detect Claude or Gemini watermarks.
+mistral.rs delegates watermark algorithms to the standalone Rust `llm-watermarking`
+library. Six token schemes are available through Rust, Python, and HTTP generation:
+SynthID-Text, KGW, Unigram, exponential-race, inverse-transform, and MPAC. SemStamp
+is available through embedding helpers; it cannot be attached to token generation.
 
-Watermarking is disabled unless a request supplies `watermark`. It works through
-the Rust SDK, Python bindings, and the HTTP `/v1/chat/completions`, `/v1/completions`,
-`/v1/responses`, and `/v1/messages` endpoints. It applies to text token selection;
-it does not watermark images, audio, or files with C2PA metadata. Interactive CLI
-slash commands do not expose watermark configuration.
+Watermarking is opt-in. Omit `watermark` or set it to `null` for ordinary sampling.
+All four generation endpoints accept the same configuration: `/v1/chat/completions`,
+`/v1/completions`, `/v1/responses`, and `/v1/messages`. Interactive slash commands
+do not configure watermarks. Image and audio generation are outside this feature.
 
-## Configure a key
+For local development, place `llm_watermarking` beside this repository. The workspace
+uses `llm-watermarking = { path = "../llm_watermarking", version = "0.1.0" }`.
+Both projects use the same pinned Candle Git revision. Mistral enables the library's
+`candle` feature and forwards its `cuda` and `metal` build features.
 
-Create a random 32-byte deployment key once and store it for both generation and
-detection. For example:
+## Configuration
+
+Every scheme requires a secret 32-byte key encoded as 64 hexadecimal characters.
+Generate it once and retain it with the tokenizer revision, scheme parameters,
+vocabulary size, and implementation version:
 
 ```bash
 export MISTRALRS_WATERMARK_KEY="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
 ```
 
-This variable is read by the examples below; the server does not automatically
-read it or enforce watermarking. A serving application can attach the configuration
-to each request. Keep the key in trusted application code and use protected
-transport when submitting it over HTTP. Request-body logs and serialized request
-archives contain the key; Rust `Debug` output redacts it. There is no built-in
-key, key registry, key rotation service, or per-user identifier.
+The examples read this variable; the server does not automatically read or enforce
+it. Rust debug formatting redacts keys. Serialized configurations and request-body
+logs contain the key, so store and transmit them accordingly.
 
-| Field | Default | Accepted values |
+| `scheme` | Parameters beyond `key` | Detection evidence |
 | --- | --- | --- |
-| `key` | Required | 64 hexadecimal characters encoding 32 random bytes |
-| `ngram_len` | `5` | `2` through `32`, including the candidate token |
-| `depth` | `30` | `1` through `256` tournament layers |
+| `synthid` | `ngram_len=5`, `depth=30` | `tokens_scored`, `mean_g_value` |
+| `kgw` | Required `vocab_size`; `context_width=1`, `green_fraction=0.5`, `delta=2`, `ignore_repeated_ngrams=true` | Green counts, expected/observed rate, nominal z-score |
+| `unigram` | Required `vocab_size`; `green_fraction=0.5`, `delta=2`, `ignore_repeated_tokens=true` | Green counts, expected/observed rate, nominal z-score |
+| `exponential` | Required `vocab_size`; `sequence_len=1024`, `start_position=0` | `tokens_scored`, `mean_cost` (lower is stronger) |
+| `inverse_transform` | Required `vocab_size`; `sequence_len=1024`, `start_position=0` | `tokens_scored`, `mean_cost` (lower is stronger) |
+| `mpac` | Required `vocab_size`, nonempty `payload`; `radix=2`, `context_width=1`, `delta=2`, `ignore_repeated_ngrams=true` | Decoded payload, per-symbol votes, winning fraction |
+| `semstamp` | Required `embedding_dim`; `num_hyperplanes=8`, `green_fraction=0.25`, `margin=0.02`, `max_attempts=100`, `ignore_repeated_transitions=true` | Valid sentence transitions and nominal z-score |
 
-Retain the key, parameters, tokenizer revision, and implementation version to
-reproduce detection. Unknown configuration fields and invalid parameter values
-are rejected. Omit `watermark` or set it to `null` to keep ordinary sampling.
+`vocab_size` is the model's logits width, including padded output slots. It need
+not equal the tokenizer's reported vocabulary size. A mismatch is rejected before
+building vocabulary-sized watermark tables. MPAC payload entries are radix-r
+symbols; they are bits only when `radix=2`. Positions for the two keyed samplers
+count generated tokens, excluding the prompt, and wrap at `sequence_len`.
 
-## HTTP generation
+Native library validation checks parameter ranges. Unknown schemes and unknown
+fields are rejected. Existing HTTP configurations without `scheme` still select
+SynthID. The existing Rust/Python `SynthIdTextWatermarkConfig` remains supported.
 
-The OpenAI Python client can send the extension using `extra_body`:
+## Examples for every scheme
 
-```python
-import os
-from openai import OpenAI
+`examples/watermarking/` contains a JSON file for each of the seven schemes. The
+six generation configurations use the [Qwen3-4B output vocabulary of 151936](https://huggingface.co/Qwen/Qwen3-4B/raw/main/config.json).
+The SemStamp file uses three-dimensional synthetic embeddings for a small demo.
+All runners replace the fixture key with `MISTRALRS_WATERMARK_KEY`.
 
-client = OpenAI(base_url="http://localhost:1234/v1", api_key="unused")
-response = client.chat.completions.create(
-    model="default",
-    messages=[{"role": "user", "content": "Write a long story about a lunar garden."}],
-    temperature=0.8,
-    max_tokens=512,
-    extra_body={
-        "top_k": 40,
-        "watermark": {"key": os.environ["MISTRALRS_WATERMARK_KEY"]},
-    },
-)
-print(response.choices[0].message.content)
+```bash
+cargo run --release -p mistralrs --features metal --example watermarking -- examples/watermarking/kgw.json
+python examples/python/watermarking.py kgw
+python examples/server/watermarking.py kgw --endpoint chat/completions
 ```
 
-The same `watermark` JSON object is a top-level field on the other supported HTTP
-generation endpoints. It remains active during streaming and server-executed tool
-continuations. It does not change the response schema or insert extra characters.
+Replace `kgw` with `synthid`, `unigram`, `exponential`, `inverse_transform`, or
+`mpac` to run each token scheme. For NVIDIA builds use `--features cuda`; omit the
+feature for CPU builds. Python uses the backend compiled into its extension.
+The examples set `top_k=40`, enabling the supported GPU top-k insertion point.
+The HTTP runner also supports `completions`, `responses`, and `messages`.
 
-## Rust generation
+## Rust
 
 ```rust
-use mistralrs::{RequestBuilder, SynthIdTextWatermarkConfig, TextMessageRole};
+use mistralrs::{RequestBuilder, TextMessageRole, Watermark, WatermarkConfig};
 
-let config = SynthIdTextWatermarkConfig::new(
-    std::env::var("MISTRALRS_WATERMARK_KEY")?,
-)?;
+let config: WatermarkConfig = serde_json::from_value(serde_json::json!({
+    "scheme": "kgw",
+    "key": std::env::var("MISTRALRS_WATERMARK_KEY")?,
+    "vocab_size": 151936,
+    "delta": 2.0
+}))?;
+let detector = Watermark::new(&config)?;
 let request = RequestBuilder::new()
     .add_message(TextMessageRole::User, "Write a long story about a lunar garden.")
     .set_sampler_temperature(0.8)
     .set_sampler_topk(40)
-    .set_sampler_max_len(512)
     .set_sampler_watermark(config);
-let response = model.send_chat_request(request).await?;
+// Send the request with the model, then score its original token IDs.
+let evidence = detector.detect(&tokens, prompt_len, &eos_token_ids)?;
 ```
 
-`SamplingParams.watermark` also accepts the configuration directly. Set a
-non-greedy sampler: `RequestBuilder` starts with `top_k = 1`, so setting only a
-temperature and watermark does not create a watermark signal.
+`SamplingParams.watermark` accepts `WatermarkConfig` directly. Existing SynthID
+configurations convert with `.into()`; `set_sampler_watermark` accepts either type.
+`Watermark::apply_tensor` delegates dense probability rows to the library without
+reading their values back. `WatermarkTensor::Probabilities` retains categorical
+selection; `WatermarkTensor::SelectionScores` requires argmax. Its input contract
+is finite, nonnegative weights with positive mass. The output remains on the input
+device. The host supplies already-filtered weights and retains sampling ownership.
 
-The runnable Rust example generates text and scores it with the same tokenizer:
-
-```bash
-cargo run --release -p mistralrs --example watermarking
-```
-
-## Python generation and detection
+## Python
 
 ```python
 import os
-from mistralrs import ChatCompletionRequest, SynthIdTextWatermarkConfig
+from mistralrs import ChatCompletionRequest, WatermarkConfig
 
-watermark = SynthIdTextWatermarkConfig(os.environ["MISTRALRS_WATERMARK_KEY"])
+watermark = WatermarkConfig(
+    os.environ["MISTRALRS_WATERMARK_KEY"],
+    scheme="mpac",
+    vocab_size=151936,
+    payload=[1, 0, 1, 1],
+)
 request = ChatCompletionRequest(
-    model="default",
-    messages=[{"role": "user", "content": "Write a long story about a lunar garden."}],
+    model="Qwen/Qwen3-4B",
+    messages="Write a long story about a lunar garden.",
     temperature=0.8,
     top_k=40,
     max_tokens=512,
     watermark=watermark,
 )
-response = runner.send_chat_completion_request(request)
-
-# Use the exact tokenizer revision that generated this completion.
-tokens = tokenizer.encode(response.choices[0].message.content, add_special_tokens=False).ids
-mean_g_value, tokens_scored = watermark.detect(tokens)
-print(mean_g_value, tokens_scored)
+evidence = watermark.detect(tokens, prompt_len=prompt_len, eos_token_ids=eos_ids)
 ```
 
-Here `runner` is an initialized mistral.rs `Runner` and `tokenizer` is the matching
-`tokenizers.Tokenizer`. Prefer original generated token IDs when available:
-decoding and re-encoding may change token boundaries. To score full prompt plus
-completion IDs, pass `prompt_len` and the model's `eos_token_ids`. Detection stops
-before the first generated EOS. To score completion-only IDs, use `prompt_len=0`;
-the first `ngram_len - 1` tokens are then context only.
+The generic detector returns a dictionary with scheme-specific fields and a
+`kind` discriminator. The older `SynthIdTextWatermarkConfig.detect` continues
+returning `(mean_g_value, tokens_scored)`.
 
-Rust exposes the same detector:
+## HTTP
 
-```rust
-use mistralrs::SynthIdTextWatermark;
+For an OpenAI client, put the configuration in `extra_body`:
 
-let detector = SynthIdTextWatermark::new(&config)?;
-let evidence = detector.detect(&completion_token_ids, 0, &eos_token_ids)?;
-println!("{:?}, {}", evidence.mean_g_value, evidence.tokens_scored);
-```
-
-The score is the mean of keyed binary g-values over eligible tokens and layers.
-An independent unwatermarked sample has an expected score near `0.5`; marked text
-typically scores higher. **This is evidence, not a probability of AI authorship.**
-An empty or too-short sample yields `None` and zero scored tokens. Detection
-excludes every repeated context, including repeats beyond the generation history
-window, so repeated text cannot inflate the evidence count.
-
-Choose decision thresholds using held-out marked and unmarked text representative
-of the deployment, separated by sample length. Measure false positives and false
-negatives with the intended key, model, tokenizer, sampling settings, and text
-domains. The [DeepMind reference implementation](https://github.com/google-deepmind/synthid-text)
-also calls for calibrated thresholds for mean-based detection. No universal
-threshold or Bayesian detector is supplied here.
-
-## Algorithm and sampling integration
-
-The [SynthID-Text paper](https://www.nature.com/articles/s41586-024-08025-4) describes
-multilayer tournaments where two independent candidate tokens compete according
-to a pseudorandom binary score, with random tie breaking. For each layer, this
-implementation computes that tournament's exact probability distribution:
-
-```text
-G = sum over tokens of p[token] * g[token]
-p_next[token] = p[token] * (1 + g[token] - G)
-```
-
-This avoids drawing an exponentially large candidate set. The final token is
-drawn using the request's normal RNG. Tournament sampling preserves the model
-distribution in expectation over independent pseudorandom g-values, while a
-fixed key and context change the conditional distribution.
-
-The application order is penalties, custom logits processors, temperature and
-softmax, top-k/top-p/min-p filtering, normalization, watermarking, and sampling.
-Zero-probability tokens stay excluded. Grammar masking therefore remains binding.
-Reported logprobs retain the existing pre-filter, pre-watermark model-probability
-semantics; they are not probabilities under the keyed tournament distribution.
-
-The version-1 g-function is fully specified as:
-
-```text
-digest = SHA256(
-    ASCII("mistralrs-synthid-text-v1") || 0x00 || decoded_32_byte_key ||
-    LE32(ngram_len) || LE32(context_token_1) || ... ||
-    LE32(context_token_(ngram_len - 1)) || LE32(candidate_token)
+```python
+response = client.chat.completions.create(
+    model="Qwen/Qwen3-4B",
+    messages=[{"role": "user", "content": "Write a long story about a lunar garden."}],
+    temperature=0.8,
+    max_tokens=512,
+    extra_body={
+        "top_k": 40,
+        "watermark": {
+            "scheme": "unigram",
+            "key": os.environ["MISTRALRS_WATERMARK_KEY"],
+            "vocab_size": 151936,
+        },
+    },
 )
-g[layer] = (digest[layer / 8] >> (layer % 8)) & 1
 ```
 
-All fields have fixed widths for a configuration. This is an independent hash
-instantiation of the published method; the public Transformers sampling-table
-hash and detectors are not byte-compatible with it. No Python or PyTorch runtime
-is needed for generation or Rust detection.
+SemStamp configurations deserialize but generation rejects them with an explicit
+sentence-embedding requirement. There is no HTTP sentence-rejection or watermark
+detection endpoint.
 
-Generation skips incomplete contexts and contexts seen in the previous 1,024
-generation positions of that sequence. Prompt-only occurrences are not counted
-as previous generation positions. History is derived from the supplied token
-prefix, so sequence clones, discarded speculative branches, and grammar retries
-do not mutate shared watermark state. Standard draft sampling and speculative
-target probabilities include the watermark transformation. Sparse proposals
-retain their supplied probabilities for the acceptance calculation.
+## SemStamp
 
-## Limits and performance
+SemStamp accepts sentence embeddings from a fixed encoder. It needs complete
+candidate sentences, embedding, acceptance testing, and retry/commit handling.
+Those operations are not part of mistral's token sampler. The adapter exposes the
+library's semantic watermark without constructing another generation pipeline.
 
-Greedy decoding (`temperature=0` or `top_k=1`) has no choice to watermark.
-Short samples, tightly constrained text, repeated passages, heavy editing,
-retokenization, and paraphrasing can weaken detection. Low evidence does not
-establish that text is human-written. Anyone holding the key can generate or
-imitate the signal; this is not a cryptographic signature or proof of authorship.
+Rust callers use `Watermark::semstamp()` for acceptance, signatures, and the
+library's `prepare_tensor` operation. `detect_embeddings` scores host embeddings;
+`detect_embeddings_tensor` scores Candle embeddings on their existing device.
+Python exposes `accepts_embedding(previous, candidate)` and
+`detect_embeddings(embeddings, prompt_len=0, device_name="cpu")`; the latter also
+accepts `metal` and `cuda` when compiled in. Python lists are uploaded when a GPU
+is requested; detection reads only the library's validation status and signatures.
 
-Watermarking currently runs on the CPU with work proportional to the surviving
-vocabulary size times `depth`. CUDA batch/resident sampling and CUDA/Metal top-k
-fast paths are bypassed for marked requests; GPU inference itself remains
-available. This can increase latency, particularly with an unfiltered vocabulary.
-Benchmark your model and batch sizes before deployment. No model-quality or GPU
-performance parity with Anthropic is claimed.
+```bash
+MISTRALRS_WATERMARK_DEVICE=metal cargo run --release -p mistralrs --features metal --example watermarking -- examples/watermarking/semstamp.json
+python examples/python/watermarking.py semstamp --device metal
+```
+
+These examples use synthetic vectors, not sentence generation or a robustness
+benchmark. Real generation and detection must use the same embedding model.
+
+## Sampling and device behavior
+
+The order remains penalties/processors, temperature and softmax, top-k/top-p/min-p
+filters, watermarking, and token selection. Excluded tokens remain excluded.
+Reported logprobs refer to the unwatermarked, pre-filter model probabilities.
+Greedy sampling has no watermark choice.
+
+CPU generation supports all six token schemes, including speculative probabilities.
+The position-keyed samplers produce a point mass for a fixed key, position, and
+model distribution; speculative acceptance uses that distribution rather than
+treating selection scores as probabilities. Context and position are derived from
+sequence history, so clones and discarded branches do not advance shared state.
+
+CUDA and Metal single-sequence top-k sampling run the watermark transformation
+on the GPU. Existing top-k kernels identify candidates; Candle prepares filtered
+weights; the library applies its algorithm. One compact readback supplies the
+existing host draw and original reporting probabilities. No full probability
+vector is downloaded, and the library's strict scalar validation readback is
+avoided by its trusted tensor API.
+
+This path currently requires active temperature, `top_k` from 1 to 128, no requested
+top logprobs, no speculative sampling, and no multiple-sequence mode. Existing
+GPU penalty support is reused; custom logits processors and active DRY use the
+CPU path. Metal logits bias also uses the CPU path. Other request shapes retain
+existing host sampling and CPU watermarking. CUDA fused batch/resident and sparse
+speculative verification remain ineligible for watermarked requests.
+
+See [GPU integration boundaries](/guides/customize/watermarking-gpu/) for exact
+library and host API gaps. This feature does not replace mistral's GPU backend.
+
+## Detection and format
+
+Prefer original token IDs. Detokenizing and re-encoding can change IDs, and
+completion-only detection loses initial context for context-dependent schemes.
+Provide the prompt length and EOS IDs when available. For position-keyed sampling,
+use the generation's starting position or adjust it for a known cropped prefix.
+
+Scores are uncalibrated evidence, not probabilities of AI authorship. Counts,
+mean g-values, alignment costs, and decoded payload votes are different statistics.
+Repetitions, short samples, low-entropy output, editing, and retokenization affect
+detection. Calibrate each scheme with representative marked and unmarked data.
+Possession of a key permits generating its signal; a watermark is not a signature.
+
+SynthID retains the previous mistral domain `mistralrs-synthid-text-v1` followed
+by a zero byte. Its digest is SHA256(domain || decoded key || LE32(ngram_len) ||
+LE32(context tokens) || LE32(candidate)); layer bits are read least significant bit
+first within each byte. Other schemes use the library's versioned default domains.
+See `llm_watermarking/docs/formats.md` for their precise formats. Matching only the
+algorithm name does not establish byte compatibility with another implementation.
+None of these independent keys detect private Claude or Gemini watermarks.
 
 ## Prior implementation discussions
 

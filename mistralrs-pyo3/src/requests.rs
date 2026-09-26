@@ -9,6 +9,8 @@ use pyo3::{
     Bound, Py, PyAny, PyErr, PyRef, PyResult, Python,
 };
 
+use crate::watermark::WatermarkArg;
+
 use crate::code_execution::{parse_agent_permission, parse_permission, ShellSkillMount};
 
 #[pyclass]
@@ -119,7 +121,7 @@ fn parse_reasoning_effort(
 #[derive(Debug)]
 /// An OpenAI API compatible completion request.
 pub struct CompletionRequest {
-    pub(crate) watermark: Option<SynthIdTextWatermarkConfig>,
+    pub(crate) watermark: Option<WatermarkArg>,
     pub(crate) _model: String,
     pub(crate) adapter: Option<AdapterSelection>,
     pub(crate) prompt: String,
@@ -211,7 +213,7 @@ impl CompletionRequest {
         truncate_sequence: Option<bool>,
         ignore_eos: bool,
         adapter: Option<Py<PyAny>>,
-        watermark: Option<SynthIdTextWatermarkConfig>,
+        watermark: Option<WatermarkArg>,
     ) -> PyResult<Self> {
         Ok(Self {
             prompt,
@@ -336,7 +338,7 @@ fn convert_token(value: i64) -> PyResult<u32> {
 #[derive(Debug)]
 /// An OpenAI API compatible chat completion request.
 pub struct ChatCompletionRequest {
-    pub(crate) watermark: Option<SynthIdTextWatermarkConfig>,
+    pub(crate) watermark: Option<WatermarkArg>,
     #[allow(clippy::type_complexity)]
     pub(crate) messages: Either<
         Vec<
@@ -486,7 +488,7 @@ impl ChatCompletionRequest {
         input_files: Option<Vec<crate::files::InputFile>>,
         ignore_eos: bool,
         adapter: Option<Py<PyAny>>,
-        watermark: Option<SynthIdTextWatermarkConfig>,
+        watermark: Option<WatermarkArg>,
     ) -> PyResult<Self> {
         let messages = Python::with_gil(|py| {
             if let Ok(messages) = messages.bind(py).downcast_exact::<PyList>() {

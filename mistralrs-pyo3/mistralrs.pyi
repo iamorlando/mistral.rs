@@ -138,6 +138,39 @@ class SynthIdTextWatermarkConfig:
         """Return (mean g-value, tokens scored), without a calibrated detection threshold."""
         ...
 
+class WatermarkConfig:
+    """Select a watermark scheme; key is 64 hexadecimal characters and has no default."""
+
+    def __init__(self, key: str, *, scheme: str = "synthid", **parameters: Any) -> None:
+        """Schemes: synthid, kgw, unigram, exponential, inverse_transform, mpac, semstamp.
+
+        Parameters match the [watermark configuration](/guides/customize/watermarking/).
+        SemStamp requires sentence embeddings and cannot be used for token generation.
+        """
+        ...
+    @property
+    def scheme(self) -> str: ...
+    def detect(
+        self,
+        tokens: list[int],
+        prompt_len: int = 0,
+        eos_token_ids: list[int] | None = None,
+    ) -> dict[str, Any]:
+        """Return scheme-specific evidence without a calibrated detection threshold."""
+        ...
+    def detect_embeddings(
+        self,
+        embeddings: list[list[float]],
+        prompt_len: int = 0,
+        *,
+        device_name: Literal["cpu", "cuda", "metal"] = "cpu",
+    ) -> dict[str, Any]:
+        """Return SemStamp evidence using a fixed sentence encoder and the chosen backend."""
+        ...
+    def accepts_embedding(self, previous: list[float], candidate: list[float]) -> bool:
+        """Check a SemStamp sentence transition on the CPU."""
+        ...
+
 @dataclass
 class ChatCompletionRequest:
     """
@@ -211,7 +244,7 @@ class ChatCompletionRequest:
     input_files: list[InputFile] | None = None
     ignore_eos: bool = False
     adapter: str | LoraAdapterGeneration | None = field(default=None, kw_only=True)
-    watermark: SynthIdTextWatermarkConfig | None = field(default=None, kw_only=True)
+    watermark: WatermarkConfig | SynthIdTextWatermarkConfig | None = field(default=None, kw_only=True)
 
 @dataclass
 class CompletionRequest:
@@ -247,7 +280,7 @@ class CompletionRequest:
     truncate_sequence: bool = False
     ignore_eos: bool = False
     adapter: str | LoraAdapterGeneration | None = field(default=None, kw_only=True)
-    watermark: SynthIdTextWatermarkConfig | None = field(default=None, kw_only=True)
+    watermark: WatermarkConfig | SynthIdTextWatermarkConfig | None = field(default=None, kw_only=True)
 
 @dataclass
 class EmbeddingRequest:

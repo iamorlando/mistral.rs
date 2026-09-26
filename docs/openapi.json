@@ -2178,8 +2178,8 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/SynthIdTextWatermarkConfig",
-                "description": "Opt-in SynthID-Text tournament watermarking."
+                "$ref": "#/components/schemas/WatermarkConfig",
+                "description": "Opt-in token watermarking; the scheme selects the library algorithm."
               }
             ]
           },
@@ -3193,8 +3193,8 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/SynthIdTextWatermarkConfig",
-                "description": "Opt-in SynthID-Text tournament watermarking."
+                "$ref": "#/components/schemas/WatermarkConfig",
+                "description": "Opt-in token watermarking; the scheme selects the library algorithm."
               }
             ]
           },
@@ -3668,8 +3668,8 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/SynthIdTextWatermarkConfig",
-                "description": "Opt-in SynthID-Text tournament watermarking."
+                "$ref": "#/components/schemas/WatermarkConfig",
+                "description": "Opt-in token watermarking; the scheme selects the library algorithm."
               }
             ]
           }
@@ -5627,8 +5627,8 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/SynthIdTextWatermarkConfig",
-                "description": "Opt-in SynthID-Text tournament watermarking."
+                "$ref": "#/components/schemas/WatermarkConfig",
+                "description": "Opt-in token watermarking; the scheme selects the library algorithm."
               }
             ]
           }
@@ -8378,28 +8378,6 @@
           }
         }
       },
-      "SynthIdTextWatermarkConfig": {
-        "type": "object",
-        "description": "Opt-in SynthID-Text tournament sampling with an independent, secret deployment key.",
-        "required": [
-          "key"
-        ],
-        "properties": {
-          "depth": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "key": {
-            "type": "string",
-            "description": "A random 32-byte key encoded as 64 hexadecimal characters."
-          },
-          "ngram_len": {
-            "type": "integer",
-            "minimum": 0
-          }
-        },
-        "additionalProperties": false
-      },
       "TextConfig": {
         "type": "object",
         "description": "Text output configuration",
@@ -8727,6 +8705,260 @@
             "description": "The URL"
           }
         }
+      },
+      "WatermarkConfig": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "key",
+              "scheme"
+            ],
+            "properties": {
+              "depth": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "key": {
+                "type": "string"
+              },
+              "ngram_len": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "scheme": {
+                "type": "string",
+                "enum": [
+                  "synthid"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "key",
+              "vocab_size",
+              "scheme"
+            ],
+            "properties": {
+              "context_width": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "delta": {
+                "type": "number",
+                "format": "double"
+              },
+              "green_fraction": {
+                "type": "number",
+                "format": "double"
+              },
+              "ignore_repeated_ngrams": {
+                "type": "boolean"
+              },
+              "key": {
+                "type": "string"
+              },
+              "scheme": {
+                "type": "string",
+                "enum": [
+                  "kgw"
+                ]
+              },
+              "vocab_size": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "key",
+              "vocab_size",
+              "scheme"
+            ],
+            "properties": {
+              "delta": {
+                "type": "number",
+                "format": "double"
+              },
+              "green_fraction": {
+                "type": "number",
+                "format": "double"
+              },
+              "ignore_repeated_tokens": {
+                "type": "boolean"
+              },
+              "key": {
+                "type": "string"
+              },
+              "scheme": {
+                "type": "string",
+                "enum": [
+                  "unigram"
+                ]
+              },
+              "vocab_size": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "key",
+              "vocab_size",
+              "scheme"
+            ],
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "scheme": {
+                "type": "string",
+                "enum": [
+                  "exponential"
+                ]
+              },
+              "sequence_len": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "start_position": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "vocab_size": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "key",
+              "vocab_size",
+              "scheme"
+            ],
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "scheme": {
+                "type": "string",
+                "enum": [
+                  "inverse_transform"
+                ]
+              },
+              "sequence_len": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "start_position": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "vocab_size": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "key",
+              "vocab_size",
+              "payload",
+              "scheme"
+            ],
+            "properties": {
+              "context_width": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "delta": {
+                "type": "number",
+                "format": "double"
+              },
+              "ignore_repeated_ngrams": {
+                "type": "boolean"
+              },
+              "key": {
+                "type": "string"
+              },
+              "payload": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                }
+              },
+              "radix": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "scheme": {
+                "type": "string",
+                "enum": [
+                  "mpac"
+                ]
+              },
+              "vocab_size": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "key",
+              "embedding_dim",
+              "scheme"
+            ],
+            "properties": {
+              "embedding_dim": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "green_fraction": {
+                "type": "number",
+                "format": "double"
+              },
+              "ignore_repeated_transitions": {
+                "type": "boolean"
+              },
+              "key": {
+                "type": "string"
+              },
+              "margin": {
+                "type": "number",
+                "format": "double"
+              },
+              "max_attempts": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "num_hyperplanes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "scheme": {
+                "type": "string",
+                "enum": [
+                  "semstamp"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Selects a library watermark; vocabulary sizes refer to model output rows, including padding."
       },
       "WebSearchContentType": {
         "type": "string",

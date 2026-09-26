@@ -173,7 +173,7 @@ impl Engine {
                 | RequestMessage::MultimodalChat { .. }
         );
         if let Some(config) = &request.sampling_params.watermark {
-            if let Err(error) = config.validate() {
+            if let Err(error) = config.validate_generation() {
                 request
                     .response
                     .send(Response::ValidationError(error.into()))

@@ -15,7 +15,11 @@ use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIter
 use serde::{Deserialize, Serialize};
 use tokenizers::Tokenizer;
 
-use crate::{SynthIdTextWatermark, SynthIdTextWatermarkConfig};
+use crate::watermark::RequestWatermark;
+use crate::WatermarkConfig;
+
+#[cfg(any(feature = "cuda", feature = "metal", test))]
+mod watermark;
 
 static DRY_SEQUENCE_BREAKERS: LazyLock<Vec<String>> =
     LazyLock::new(|| ["\n", ":", "\"", "*"].map(String::from).to_vec());
@@ -77,8 +81,12 @@ pub struct SamplingParams {
     pub logits_bias: Option<HashMap<u32, f32>>,
     pub n_choices: usize,
     pub dry_params: Option<DrySamplingParams>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub watermark: Option<SynthIdTextWatermarkConfig>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "WatermarkConfig::deserialize_option"
+    )]
+    pub watermark: Option<WatermarkConfig>,
 }
 
 impl SamplingParams {
@@ -315,7 +323,7 @@ pub struct Sampler {
     min_p: f64,
     logits_bias: HashMap<u32, f32>,
     logits_processors: Vec<Arc<dyn CustomLogitsProcessor>>,
-    watermark: Option<SynthIdTextWatermark>,
+    watermark: Option<RequestWatermark>,
     #[cfg(feature = "cuda")]
     top1_cache: Arc<Mutex<Option<crate::ops::CudaTop1LogitsWorkspace>>>,
     #[cfg(feature = "cuda")]
@@ -749,11 +757,8 @@ impl Sampler {
         self.temperature.is_none()
     }
 
-    pub fn with_watermark(
-        mut self,
-        config: Option<&SynthIdTextWatermarkConfig>,
-    ) -> anyhow::Result<Self> {
-        self.watermark = config.map(SynthIdTextWatermark::new).transpose()?;
+    pub fn with_watermark(mut self, config: Option<&WatermarkConfig>) -> anyhow::Result<Self> {
+        self.watermark = config.map(RequestWatermark::new).transpose()?;
         Ok(self)
     }
 
@@ -1365,7 +1370,6 @@ impl Sampler {
         const MAX_DEVICE_TOP_K: i64 = 128;
 
         !return_logprobs
-            && self.watermark.is_none()
             && !sample_speculative
             && !multiple_sequences
             && self.temperature.is_some()
@@ -1865,7 +1869,9 @@ impl Sampler {
         Self::normalize_probs(&mut sampling)?;
         if let Some(watermark) = &self.watermark {
             if self.temperature.is_some() {
-                watermark.apply(&mut sampling, context, prompt_len);
+                watermark
+                    .resolve(sampling.len())?
+                    .apply(&mut sampling, context, prompt_len)?;
                 Self::normalize_probs(&mut sampling)?;
             }
         }
@@ -2160,6 +2166,20 @@ impl Sampler {
         multiple_sequences: bool,
     ) -> Result<Logprobs> {
         if self.watermark.is_some() {
+            #[cfg(any(feature = "cuda", feature = "metal"))]
+            if let Some(sampled) = self.try_sample_watermarked_topk(
+                &logits,
+                &watermark::WatermarkStep {
+                    context,
+                    prompt_len,
+                    return_logprobs,
+                    sample_speculative,
+                    multiple_sequences,
+                },
+                rng.clone(),
+            )? {
+                return Ok(sampled);
+            }
             let probs = self.speculative_probs(logits, context, prompt_len)?;
             return self.sample_multinomial(
                 &probs.sampling,
@@ -2294,7 +2314,10 @@ mod tests {
             vec![],
         )
         .unwrap();
-        let sampler = baseline.clone().with_watermark(Some(&config)).unwrap();
+        let sampler = baseline
+            .clone()
+            .with_watermark(Some(&config.clone().into()))
+            .unwrap();
         let logits = Tensor::new(&[0.0f32, 0.2, 0.3, 0.4, -10.0], &Device::Cpu).unwrap();
         let context = [10, 11, 12, 13];
         let probs = sampler
@@ -2359,7 +2382,7 @@ mod tests {
                 vec![],
             )
             .unwrap()
-            .with_watermark(Some(&config))
+            .with_watermark(Some(&config.clone().into()))
             .unwrap();
             let logits = Tensor::new(&[0.0f32, 1.0, 0.0], &Device::Cpu).unwrap();
             let probs = sampler
@@ -2371,7 +2394,7 @@ mod tests {
 
     #[cfg(feature = "cuda")]
     #[test]
-    fn watermark_disables_cuda_sampling_plans() {
+    fn watermark_uses_cuda_topk_but_excludes_fused_sampling_plans() {
         let config = crate::SynthIdTextWatermarkConfig::new("01".repeat(32)).unwrap();
         let sampler = super::Sampler::new(
             Some(1.0),
@@ -2388,11 +2411,11 @@ mod tests {
             vec![],
         )
         .unwrap()
-        .with_watermark(Some(&config))
+        .with_watermark(Some(&config.clone().into()))
         .unwrap();
         assert!(sampler.cuda_batch_sampling_plan(false).is_none());
         assert!(sampler.cuda_speculative_sampling_plan(false).is_none());
-        assert!(!sampler.can_sample_topk_on_device(false, false, false, true));
+        assert!(sampler.can_sample_topk_on_device(false, false, false, true));
     }
 
     #[test]

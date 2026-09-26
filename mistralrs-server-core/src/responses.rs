@@ -479,8 +479,12 @@ impl IncludeConfig {
 /// OpenResponses API create request
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct OpenResponsesCreateRequest {
-    /// Opt-in SynthID-Text tournament watermarking.
-    pub watermark: Option<mistralrs_core::SynthIdTextWatermarkConfig>,
+    /// Opt-in token watermarking; the scheme selects the library algorithm.
+    #[serde(
+        default,
+        deserialize_with = "mistralrs_core::WatermarkConfig::deserialize_option"
+    )]
+    pub watermark: Option<mistralrs_core::WatermarkConfig>,
     // ===== Core OpenResponses Fields =====
     /// The model to use for this request
     #[serde(default = "default_model")]

@@ -1125,8 +1125,12 @@ fn normalize_openai_tools(
 /// Chat completion request following OpenAI's specification
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct ChatCompletionRequest {
-    /// Opt-in SynthID-Text tournament watermarking.
-    pub watermark: Option<mistralrs_core::SynthIdTextWatermarkConfig>,
+    /// Opt-in token watermarking; the scheme selects the library algorithm.
+    #[serde(
+        default,
+        deserialize_with = "mistralrs_core::WatermarkConfig::deserialize_option"
+    )]
+    pub watermark: Option<mistralrs_core::WatermarkConfig>,
     /// The conversation so far, or a single raw prompt string.
     #[schema(
         schema_with = messages_schema,
@@ -1448,8 +1452,12 @@ pub struct CompletionChunkResponseBody {
 /// Legacy OpenAI compatible text completion request
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct CompletionRequest {
-    /// Opt-in SynthID-Text tournament watermarking.
-    pub watermark: Option<mistralrs_core::SynthIdTextWatermarkConfig>,
+    /// Opt-in token watermarking; the scheme selects the library algorithm.
+    #[serde(
+        default,
+        deserialize_with = "mistralrs_core::WatermarkConfig::deserialize_option"
+    )]
+    pub watermark: Option<mistralrs_core::WatermarkConfig>,
     /// Model ID; "default" targets the only loaded model.
     #[schema(example = "mistral")]
     #[serde(default = "default_model")]
@@ -2135,8 +2143,14 @@ mod tests {
         for config in [chat.watermark, completion.watermark, responses.watermark] {
             let config = config.unwrap();
             config.validate().unwrap();
-            assert_eq!(config.ngram_len, 5);
-            assert_eq!(config.depth, 12);
+            assert!(matches!(
+                config,
+                mistralrs_core::WatermarkConfig::Synthid {
+                    ngram_len: 5,
+                    depth: 12,
+                    ..
+                }
+            ));
         }
         let default: ChatCompletionRequest =
             serde_json::from_value(json!({"messages": "hello"})).unwrap();

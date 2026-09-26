@@ -55,6 +55,7 @@ GROUPS = [
         [
             "LoraAdapterGeneration",
             "SynthIdTextWatermarkConfig",
+            "WatermarkConfig",
             "ChatCompletionRequest",
             "CompletionRequest",
             "EmbeddingRequest",
@@ -208,6 +209,8 @@ def _collect_args(func: ast.FunctionDef) -> list[tuple[str, str, str | None]]:
         ann = _unparse(arg.annotation)
         d = _unparse(default) if default is not None else None
         out.append((arg.arg, ann, d))
+    if args.kwarg:
+        out.append((f"**{args.kwarg.arg}", _unparse(args.kwarg.annotation), None))
     return out
 
 

@@ -1048,9 +1048,9 @@ impl RequestBuilder {
         self
     }
 
-    /// Enable SynthID-Text tournament sampling with a deployment-specific key.
-    pub fn set_sampler_watermark(mut self, config: crate::SynthIdTextWatermarkConfig) -> Self {
-        self.sampling_params.watermark = Some(config);
+    /// Enable a library token-watermark scheme with a deployment-specific key.
+    pub fn set_sampler_watermark(mut self, config: impl Into<crate::WatermarkConfig>) -> Self {
+        self.sampling_params.watermark = Some(config.into());
         self
     }
 
