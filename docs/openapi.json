@@ -2172,6 +2172,17 @@
               "null"
             ]
           },
+          "watermark": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SynthIdTextWatermarkConfig",
+                "description": "Opt-in SynthID-Text tournament watermarking."
+              }
+            ]
+          },
           "web_search_options": {
             "oneOf": [
               {
@@ -3176,6 +3187,17 @@
             "description": "Truncate inputs that exceed the model's context length instead of erroring.",
             "example": null
           },
+          "watermark": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SynthIdTextWatermarkConfig",
+                "description": "Opt-in SynthID-Text tournament watermarking."
+              }
+            ]
+          },
           "web_search_options": {
             "oneOf": [
               {
@@ -3638,6 +3660,17 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "watermark": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SynthIdTextWatermarkConfig",
+                "description": "Opt-in SynthID-Text tournament watermarking."
+              }
             ]
           }
         }
@@ -5585,6 +5618,17 @@
               {
                 "$ref": "#/components/schemas/TruncationStrategy",
                 "description": "Truncation strategy when input exceeds context window"
+              }
+            ]
+          },
+          "watermark": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SynthIdTextWatermarkConfig",
+                "description": "Opt-in SynthID-Text tournament watermarking."
               }
             ]
           }
@@ -8333,6 +8377,28 @@
             "description": "Include usage statistics in stream"
           }
         }
+      },
+      "SynthIdTextWatermarkConfig": {
+        "type": "object",
+        "description": "Opt-in SynthID-Text tournament sampling with an independent, secret deployment key.",
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "depth": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "key": {
+            "type": "string",
+            "description": "A random 32-byte key encoded as 64 hexadecimal characters."
+          },
+          "ngram_len": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
       },
       "TextConfig": {
         "type": "object",

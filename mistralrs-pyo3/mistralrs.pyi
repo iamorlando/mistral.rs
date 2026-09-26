@@ -125,6 +125,19 @@ class LoraAdapterError(ValueError):
 
     code: str
 
+class SynthIdTextWatermarkConfig:
+    """SynthID-Text configuration; key is 64 hexadecimal characters and has no default."""
+
+    def __init__(self, key: str, *, ngram_len: int = 5, depth: int = 30) -> None: ...
+    def detect(
+        self,
+        tokens: list[int],
+        prompt_len: int = 0,
+        eos_token_ids: list[int] | None = None,
+    ) -> tuple[float | None, int]:
+        """Return (mean g-value, tokens scored), without a calibrated detection threshold."""
+        ...
+
 @dataclass
 class ChatCompletionRequest:
     """
@@ -198,6 +211,7 @@ class ChatCompletionRequest:
     input_files: list[InputFile] | None = None
     ignore_eos: bool = False
     adapter: str | LoraAdapterGeneration | None = field(default=None, kw_only=True)
+    watermark: SynthIdTextWatermarkConfig | None = field(default=None, kw_only=True)
 
 @dataclass
 class CompletionRequest:
@@ -233,6 +247,7 @@ class CompletionRequest:
     truncate_sequence: bool = False
     ignore_eos: bool = False
     adapter: str | LoraAdapterGeneration | None = field(default=None, kw_only=True)
+    watermark: SynthIdTextWatermarkConfig | None = field(default=None, kw_only=True)
 
 @dataclass
 class EmbeddingRequest:

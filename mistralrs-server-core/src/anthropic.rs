@@ -82,6 +82,8 @@ fn default_error_type() -> String {
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct AnthropicMessagesRequest {
+    /// Opt-in SynthID-Text tournament watermarking.
+    pub watermark: Option<mistralrs_core::SynthIdTextWatermarkConfig>,
     #[serde(default = "default_model")]
     pub model: String,
     pub max_tokens: Option<usize>,
@@ -601,6 +603,7 @@ impl AnthropicMessagesRequest {
         }
 
         Ok(ChatCompletionRequest {
+            watermark: self.watermark,
             messages: Either::Left(messages),
             model: self.model,
             adapter: None,
@@ -2599,6 +2602,7 @@ mod tests {
             "repetition_penalty": 1.05,
             "min_p": 0.05,
             "dry_multiplier": 0.8,
+            "watermark": {"key": "01".repeat(32), "ngram_len": 5, "depth": 12},
             "dry_base": 1.75,
             "dry_allowed_length": 4,
             "dry_sequence_breakers": ["\\n"],
@@ -2622,6 +2626,9 @@ mod tests {
         assert_eq!(chat.repetition_penalty, Some(1.05));
         assert_eq!(chat.min_p, Some(0.05));
         assert_eq!(chat.dry_multiplier, Some(0.8));
+        let watermark = chat.watermark.as_ref().unwrap();
+        assert_eq!(watermark.key, "01".repeat(32));
+        assert_eq!(watermark.depth, 12);
         assert_eq!(chat.dry_base, Some(1.75));
         assert_eq!(chat.dry_allowed_length, Some(4));
         assert_eq!(chat.dry_sequence_breakers, Some(vec!["\\n".to_string()]));

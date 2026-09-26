@@ -172,6 +172,16 @@ impl Engine {
                 | RequestMessage::CompletionTokens(_)
                 | RequestMessage::MultimodalChat { .. }
         );
+        if let Some(config) = &request.sampling_params.watermark {
+            if let Err(error) = config.validate() {
+                request
+                    .response
+                    .send(Response::ValidationError(error.into()))
+                    .await
+                    .unwrap_or_else(|_| warn!("Receiver disconnected"));
+                return;
+            }
+        }
         if is_text_generation && request.sampling_params.max_len == Some(0) {
             request
                 .response
@@ -582,7 +592,8 @@ impl Engine {
             minp,
             request.sampling_params.logits_bias.unwrap_or_default(),
             request.logits_processors.unwrap_or_default(),
-        );
+        )
+        .and_then(|sampler| sampler.with_watermark(request.sampling_params.watermark.as_ref()));
         let sampler = handle_request_error!(sampler, request.response);
 
         if request.sampling_params.n_choices == 0 {

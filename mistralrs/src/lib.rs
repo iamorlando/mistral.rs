@@ -298,6 +298,7 @@ pub use mistralrs_core::{
 
 // ========== Sampling ==========
 pub use mistralrs_core::{DrySamplingParams, ModelGenerationDefaults, SamplingParams, StopTokens};
+pub use mistralrs_core::{SynthIdTextWatermark, SynthIdTextWatermarkConfig, WatermarkDetection};
 
 // ========== Tool Types ==========
 pub use mistralrs_core::{

@@ -1125,6 +1125,8 @@ fn normalize_openai_tools(
 /// Chat completion request following OpenAI's specification
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct ChatCompletionRequest {
+    /// Opt-in SynthID-Text tournament watermarking.
+    pub watermark: Option<mistralrs_core::SynthIdTextWatermarkConfig>,
     /// The conversation so far, or a single raw prompt string.
     #[schema(
         schema_with = messages_schema,
@@ -1446,6 +1448,8 @@ pub struct CompletionChunkResponseBody {
 /// Legacy OpenAI compatible text completion request
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct CompletionRequest {
+    /// Opt-in SynthID-Text tournament watermarking.
+    pub watermark: Option<mistralrs_core::SynthIdTextWatermarkConfig>,
     /// Model ID; "default" targets the only loaded model.
     #[schema(example = "mistral")]
     #[serde(default = "default_model")]
@@ -2111,6 +2115,33 @@ pub struct ResponsesDeltaContent {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn generation_requests_accept_opt_in_watermark() {
+        let config = json!({"key": "01".repeat(32), "depth": 12});
+        let chat: ChatCompletionRequest = serde_json::from_value(json!({
+            "messages": "hello", "watermark": config.clone()
+        }))
+        .unwrap();
+        let completion: CompletionRequest = serde_json::from_value(json!({
+            "prompt": "hello", "watermark": config.clone()
+        }))
+        .unwrap();
+        let responses: crate::responses::OpenResponsesCreateRequest =
+            serde_json::from_value(json!({
+                "input": "hello", "watermark": config
+            }))
+            .unwrap();
+        for config in [chat.watermark, completion.watermark, responses.watermark] {
+            let config = config.unwrap();
+            config.validate().unwrap();
+            assert_eq!(config.ngram_len, 5);
+            assert_eq!(config.depth, 12);
+        }
+        let default: ChatCompletionRequest =
+            serde_json::from_value(json!({"messages": "hello"})).unwrap();
+        assert!(default.watermark.is_none());
+    }
 
     #[test]
     fn ignore_eos_defaults_false_and_accepts_true() {

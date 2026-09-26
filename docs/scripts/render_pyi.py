@@ -54,6 +54,7 @@ GROUPS = [
         "Request dataclasses passed to Runner methods.",
         [
             "LoraAdapterGeneration",
+            "SynthIdTextWatermarkConfig",
             "ChatCompletionRequest",
             "CompletionRequest",
             "EmbeddingRequest",

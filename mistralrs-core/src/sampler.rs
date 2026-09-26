@@ -15,6 +15,8 @@ use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIter
 use serde::{Deserialize, Serialize};
 use tokenizers::Tokenizer;
 
+use crate::{SynthIdTextWatermark, SynthIdTextWatermarkConfig};
+
 static DRY_SEQUENCE_BREAKERS: LazyLock<Vec<String>> =
     LazyLock::new(|| ["\n", ":", "\"", "*"].map(String::from).to_vec());
 const SUPPRESS_TOKEN_LOGIT_BIAS: f32 = -1.0e9;
@@ -75,6 +77,8 @@ pub struct SamplingParams {
     pub logits_bias: Option<HashMap<u32, f32>>,
     pub n_choices: usize,
     pub dry_params: Option<DrySamplingParams>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watermark: Option<SynthIdTextWatermarkConfig>,
 }
 
 impl SamplingParams {
@@ -100,6 +104,7 @@ impl SamplingParams {
             logits_bias: None,
             n_choices: 1,
             dry_params: None,
+            watermark: None,
         }
     }
 
@@ -123,6 +128,7 @@ impl SamplingParams {
             logits_bias: None,
             n_choices: 1,
             dry_params: None,
+            watermark: None,
         }
     }
 
@@ -309,6 +315,7 @@ pub struct Sampler {
     min_p: f64,
     logits_bias: HashMap<u32, f32>,
     logits_processors: Vec<Arc<dyn CustomLogitsProcessor>>,
+    watermark: Option<SynthIdTextWatermark>,
     #[cfg(feature = "cuda")]
     top1_cache: Arc<Mutex<Option<crate::ops::CudaTop1LogitsWorkspace>>>,
     #[cfg(feature = "cuda")]
@@ -730,6 +737,7 @@ impl Sampler {
             min_p,
             logits_bias,
             logits_processors,
+            watermark: None,
             #[cfg(feature = "cuda")]
             top1_cache: Arc::new(Mutex::new(None)),
             #[cfg(feature = "cuda")]
@@ -739,6 +747,14 @@ impl Sampler {
 
     pub fn is_argmax(&self) -> bool {
         self.temperature.is_none()
+    }
+
+    pub fn with_watermark(
+        mut self,
+        config: Option<&SynthIdTextWatermarkConfig>,
+    ) -> anyhow::Result<Self> {
+        self.watermark = config.map(SynthIdTextWatermark::new).transpose()?;
+        Ok(self)
     }
 
     pub(crate) fn temperature(&self) -> Option<f64> {
@@ -758,6 +774,7 @@ impl Sampler {
             .as_ref()
             .is_some_and(|params| params.multiplier != 0.0);
         if return_logprobs
+            || self.watermark.is_some()
             || has_penalties
             || has_dry_penalty
             || !self.logits_bias.is_empty()
@@ -1348,6 +1365,7 @@ impl Sampler {
         const MAX_DEVICE_TOP_K: i64 = 128;
 
         !return_logprobs
+            && self.watermark.is_none()
             && !sample_speculative
             && !multiple_sequences
             && self.temperature.is_some()
@@ -1369,6 +1387,7 @@ impl Sampler {
         multiple_sequences: bool,
     ) -> bool {
         !return_logprobs
+            && self.watermark.is_none()
             && !sample_speculative
             && !multiple_sequences
             && self.temperature.is_none()
@@ -1844,6 +1863,12 @@ impl Sampler {
         };
         self.filter_top_kp_min_p(&mut sampling);
         Self::normalize_probs(&mut sampling)?;
+        if let Some(watermark) = &self.watermark {
+            if self.temperature.is_some() {
+                watermark.apply(&mut sampling, context, prompt_len);
+                Self::normalize_probs(&mut sampling)?;
+            }
+        }
         Ok(SpeculativeProbs {
             sampling,
             reporting,
@@ -2134,6 +2159,15 @@ impl Sampler {
         sample_speculative: bool,
         multiple_sequences: bool,
     ) -> Result<Logprobs> {
+        if self.watermark.is_some() {
+            let probs = self.speculative_probs(logits, context, prompt_len)?;
+            return self.sample_multinomial(
+                &probs.sampling,
+                &probs.reporting,
+                return_logprobs,
+                rng,
+            );
+        }
         #[cfg(feature = "cuda")]
         if logits.device().is_cuda()
             && self.can_sample_greedy_on_device(
@@ -2235,6 +2269,131 @@ impl Sampler {
 mod tests {
     use super::{argmax_f32, partial_sort_top_k, ModelGenerationDefaults, SamplingParams};
     use std::collections::HashMap;
+
+    #[test]
+    fn watermark_sampling_matches_speculative_distribution_and_keeps_logprobs() {
+        use super::Sampler;
+        use candle_core::{Device, Tensor};
+        use rand::SeedableRng;
+        use rand_isaac::Isaac64Rng;
+        use std::sync::{Arc, Mutex};
+
+        let config = crate::SynthIdTextWatermarkConfig::new("01".repeat(32)).unwrap();
+        let baseline = Sampler::new(
+            Some(0.8),
+            4,
+            None,
+            None,
+            None,
+            None,
+            None,
+            3,
+            0.95,
+            0.05,
+            HashMap::new(),
+            vec![],
+        )
+        .unwrap();
+        let sampler = baseline.clone().with_watermark(Some(&config)).unwrap();
+        let logits = Tensor::new(&[0.0f32, 0.2, 0.3, 0.4, -10.0], &Device::Cpu).unwrap();
+        let context = [10, 11, 12, 13];
+        let probs = sampler
+            .speculative_target_probs(logits.clone(), &context, 4)
+            .unwrap();
+        let unmarked = baseline
+            .speculative_target_probs(logits.clone(), &context, 4)
+            .unwrap();
+        assert_eq!(probs.reporting, unmarked.reporting);
+        assert_ne!(probs.sampling, unmarked.sampling);
+        assert_eq!(probs.sampling[0], 0.0);
+        assert_eq!(probs.sampling[4], 0.0);
+        assert_eq!(
+            probs.sampling,
+            sampler
+                .speculative_candidate_probs(logits.clone(), &context, 4)
+                .unwrap()
+        );
+        let rng = || Arc::new(Mutex::new(Isaac64Rng::seed_from_u64(42)));
+        let expected = sampler
+            .sample_from_probs(&probs.sampling, &probs.reporting, true, rng())
+            .unwrap();
+        let actual = sampler
+            .sample(logits.clone(), &context, 4, true, rng(), false, false)
+            .unwrap();
+        assert_eq!(actual.token, expected.token);
+        assert_eq!(actual.logprob, expected.logprob);
+        assert_eq!(actual.top_logprobs, expected.top_logprobs);
+        let batched = sampler
+            .sample(logits.clone(), &context, 4, true, rng(), false, true)
+            .unwrap();
+        assert_eq!(actual.token, batched.token);
+        let disabled = baseline.clone().with_watermark(None).unwrap();
+        let original = baseline
+            .sample(logits.clone(), &context, 4, true, rng(), false, false)
+            .unwrap();
+        let unchanged = disabled
+            .sample(logits, &context, 4, true, rng(), false, false)
+            .unwrap();
+        assert_eq!(original.token, unchanged.token);
+        assert_eq!(original.logprob, unchanged.logprob);
+    }
+
+    #[test]
+    fn watermark_does_not_change_greedy_decoding() {
+        use super::Sampler;
+        use candle_core::{Device, Tensor};
+        let config = crate::SynthIdTextWatermarkConfig::new("01".repeat(32)).unwrap();
+        for (temperature, top_k) in [(None, -1), (Some(1.0), 1)] {
+            let sampler = Sampler::new(
+                temperature,
+                0,
+                None,
+                None,
+                None,
+                None,
+                None,
+                top_k,
+                1.0,
+                0.0,
+                HashMap::new(),
+                vec![],
+            )
+            .unwrap()
+            .with_watermark(Some(&config))
+            .unwrap();
+            let logits = Tensor::new(&[0.0f32, 1.0, 0.0], &Device::Cpu).unwrap();
+            let probs = sampler
+                .speculative_target_probs(logits, &[1, 2, 3, 4], 4)
+                .unwrap();
+            assert_eq!(probs.sampling, vec![0.0, 1.0, 0.0]);
+        }
+    }
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn watermark_disables_cuda_sampling_plans() {
+        let config = crate::SynthIdTextWatermarkConfig::new("01".repeat(32)).unwrap();
+        let sampler = super::Sampler::new(
+            Some(1.0),
+            0,
+            None,
+            None,
+            None,
+            None,
+            None,
+            32,
+            1.0,
+            0.0,
+            HashMap::new(),
+            vec![],
+        )
+        .unwrap()
+        .with_watermark(Some(&config))
+        .unwrap();
+        assert!(sampler.cuda_batch_sampling_plan(false).is_none());
+        assert!(sampler.cuda_speculative_sampling_plan(false).is_none());
+        assert!(!sampler.can_sample_topk_on_device(false, false, false, true));
+    }
 
     #[test]
     fn test_argmax() {

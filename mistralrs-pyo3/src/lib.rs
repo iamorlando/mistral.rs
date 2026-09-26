@@ -1703,6 +1703,10 @@ impl Runner {
                 queued_at: None,
                 messages,
                 sampling_params: SamplingParams {
+                    watermark: request
+                        .watermark
+                        .as_ref()
+                        .map(|config| config.inner.clone()),
                     temperature: request.temperature,
                     top_k: request.top_k,
                     top_p: request.top_p,
@@ -1934,6 +1938,10 @@ impl Runner {
                     best_of: request.best_of,
                 },
                 sampling_params: SamplingParams {
+                    watermark: request
+                        .watermark
+                        .as_ref()
+                        .map(|config| config.inner.clone()),
                     temperature: request.temperature,
                     top_k: request.top_k,
                     top_p: request.top_p,
@@ -2664,6 +2672,10 @@ impl Runner {
                 queued_at: None,
                 messages,
                 sampling_params: SamplingParams {
+                    watermark: request
+                        .watermark
+                        .as_ref()
+                        .map(|config| config.inner.clone()),
                     temperature: request.temperature,
                     top_k: request.top_k,
                     top_p: request.top_p,
@@ -2788,6 +2800,10 @@ impl Runner {
                     best_of: request.best_of,
                 },
                 sampling_params: SamplingParams {
+                    watermark: request
+                        .watermark
+                        .as_ref()
+                        .map(|config| config.inner.clone()),
                     temperature: request.temperature,
                     top_k: request.top_k,
                     top_p: request.top_p,
@@ -3232,6 +3248,7 @@ fn mistralrs(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<LoraRuntimeStatusPy>()?;
     m.add_class::<LoraAdapterGeneration>()?;
     m.add_class::<ChatCompletionRequest>()?;
+    m.add_class::<requests::SynthIdTextWatermarkConfig>()?;
     m.add_class::<CompletionRequest>()?;
     m.add_class::<EmbeddingRequest>()?;
     m.add_class::<Architecture>()?;

@@ -1048,6 +1048,12 @@ impl RequestBuilder {
         self
     }
 
+    /// Enable SynthID-Text tournament sampling with a deployment-specific key.
+    pub fn set_sampler_watermark(mut self, config: crate::SynthIdTextWatermarkConfig) -> Self {
+        self.sampling_params.watermark = Some(config);
+        self
+    }
+
     /// Limit sampling to the top-k most probable tokens.
     pub fn set_sampler_topk(mut self, topk: usize) -> Self {
         self.sampling_params.top_k = Some(topk);

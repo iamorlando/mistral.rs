@@ -110,6 +110,7 @@ mod tools;
 mod topology;
 mod utils;
 mod vision_models;
+mod watermark;
 mod xlora_models;
 
 pub use diagnostics::{
@@ -226,6 +227,7 @@ pub use utils::debug::{
 pub use utils::memory_usage::MemoryUsage;
 pub use utils::normal::{ModelDType, TryIntoDType};
 pub use utils::{paged_attn_supported, using_flash_attn};
+pub use watermark::{SynthIdTextWatermark, SynthIdTextWatermarkConfig, WatermarkDetection};
 
 // re-export llguidance for easier LlguidanceGrammar construction
 pub use llguidance;

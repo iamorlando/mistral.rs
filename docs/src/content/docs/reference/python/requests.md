@@ -13,6 +13,29 @@ Select one exact immutable LoRA adapter generation by its 64-character ID.
 | `generation` | `str` |
 
 
+## `SynthIdTextWatermarkConfig`
+
+SynthID-Text configuration; key is 64 hexadecimal characters and has no default.
+
+### `SynthIdTextWatermarkConfig.__init__`
+
+```text
+__init__(key: str, *, ngram_len: int = 5, depth: int = 30) -> None
+```
+
+### `SynthIdTextWatermarkConfig.detect`
+
+```text
+detect(
+    tokens: list[int],
+    prompt_len: int = 0,
+    eos_token_ids: list[int] | None = None,
+) -> tuple[float | None, int]
+```
+
+Return (mean g-value, tokens scored), without a calibrated detection threshold.
+
+
 ## `ChatCompletionRequest`
 
 A ChatCompletionRequest represents a request sent to the mistral.rs engine. It encodes information
@@ -80,6 +103,7 @@ are omitted, thinking is enabled with no selected effort. Contradictory
 | `input_files` | `list[InputFile] \| None` | `None` |
 | `ignore_eos` | `bool` | `False` |
 | `adapter` | `str \| LoraAdapterGeneration \| None` | `None (keyword-only)` |
+| `watermark` | `SynthIdTextWatermarkConfig \| None` | `None (keyword-only)` |
 
 
 ## `CompletionRequest`
@@ -116,6 +140,7 @@ about input data, sampling, and how to return the response.
 | `truncate_sequence` | `bool` | `False` |
 | `ignore_eos` | `bool` | `False` |
 | `adapter` | `str \| LoraAdapterGeneration \| None` | `None (keyword-only)` |
+| `watermark` | `SynthIdTextWatermarkConfig \| None` | `None (keyword-only)` |
 
 
 ## `EmbeddingRequest`
