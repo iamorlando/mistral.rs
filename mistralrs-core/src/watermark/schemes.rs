@@ -4,6 +4,8 @@ use std::{
 };
 
 use candle_core::{Result, Tensor};
+#[cfg(any(feature = "cuda", feature = "metal", test))]
+use llm_watermarking::tensor::IndexedCandidates;
 use llm_watermarking::{
     exponential, inverse_transform, kgw, mpac, sampling, semstamp, synthid, unigram,
 };
@@ -484,6 +486,44 @@ impl Watermark {
         ))
     }
 
+    #[cfg(any(feature = "cuda", feature = "metal", test))]
+    pub(crate) fn apply_indexed(
+        &self,
+        probs: &Tensor,
+        candidates: &IndexedCandidates,
+        context: &[u32],
+        prompt_len: usize,
+    ) -> Result<WatermarkTensor> {
+        let generated = context
+            .len()
+            .checked_sub(prompt_len)
+            .ok_or_else(|| candle_core::Error::Msg("prompt_len exceeds token count".into()))?;
+        let prepared = match &self.algorithm {
+            Algorithm::Synthid(w) => w.prepare_indexed(candidates, context, prompt_len)?,
+            Algorithm::Kgw(w) => w.prepare_indexed(candidates, context, prompt_len)?,
+            Algorithm::Unigram(w) => w.prepare_indexed(candidates)?,
+            Algorithm::Mpac(w, payload) => {
+                w.prepare_indexed(candidates, context, prompt_len, payload)?
+            }
+            Algorithm::Exponential(w, start, period) => {
+                return Ok(WatermarkTensor::SelectionScores(
+                    w.prepare_indexed(candidates, position(*start, generated, *period))?
+                        .apply_trusted(probs)?,
+                ))
+            }
+            Algorithm::InverseTransform(w, start, period) => {
+                return Ok(WatermarkTensor::SelectionScores(
+                    w.prepare_indexed(candidates, position(*start, generated, *period))?
+                        .apply_trusted(probs)?,
+                ))
+            }
+            Algorithm::Semstamp(_) => candle_core::bail!("{SEMSTAMP_GENERATION_ERROR}"),
+        };
+        Ok(WatermarkTensor::Probabilities(
+            prepared.apply_trusted(probs)?,
+        ))
+    }
+
     pub fn detect(
         &self,
         tokens: &[u32],
@@ -562,6 +602,7 @@ fn position(start: usize, generated: usize, period: usize) -> usize {
 /// Uncalibrated, scheme-specific evidence; scores are not probabilities of authorship.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub enum WatermarkEvidence {
     Synthid {
         tokens_scored: usize,

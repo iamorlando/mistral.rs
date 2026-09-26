@@ -149,8 +149,91 @@ response = client.chat.completions.create(
 ```
 
 SemStamp configurations deserialize but generation rejects them with an explicit
-sentence-embedding requirement. There is no HTTP sentence-rejection or watermark
-detection endpoint.
+sentence-embedding requirement. HTTP sentence-rejection generation is not supported.
+
+### HTTP detection
+
+`POST /v1/watermark/detect` accepts the same `watermark` configuration used for
+generation and returns the library's scheme-specific evidence as JSON. No model
+inference is needed for supplied token IDs or sentence embeddings. Text input
+uses the selected serving model's tokenizer.
+
+Prefer original prompt-plus-generation token IDs for exact detection:
+
+```json
+{
+  "watermark": {
+    "scheme": "kgw",
+    "key": "0000000000000000000000000000000000000000000000000000000000000000",
+    "vocab_size": 151936
+  },
+  "input": {"type": "tokens", "tokens": [1, 2, 3, 4, 5, 6]},
+  "prompt_len": 4,
+  "eos_token_ids": [151645]
+}
+```
+
+Replace the example key, token IDs, vocabulary size, and EOS IDs with the values
+from generation. `prompt_len` defaults to zero and counts prefix tokens excluded
+from evidence. Scoring stops at the first generated token in `eos_token_ids`,
+which defaults to an empty list. Prompt EOS tokens do not stop detection. Use
+the same key, scheme parameters, MPAC payload configuration, and key-stream
+`start_position` as generation. The HTTP detector accepts vocabulary sizes up to
+1,048,576 to bound vocabulary-table allocations.
+
+To score an HTTP generation response directly, send its text:
+
+```python
+import requests
+
+evidence = requests.post(
+    "http://localhost:1234/v1/watermark/detect",
+    json={
+        "watermark": watermark_config,
+        "input": {
+            "type": "text",
+            "model": "Qwen/Qwen3-4B",
+            "text": response.choices[0].message.content,
+        },
+    },
+)
+evidence.raise_for_status()
+print(evidence.json())
+```
+
+Text input requires `model`, which may be `"default"` or a serving model alias.
+It is tokenized as one raw string without a chat template. `add_special_tokens`
+defaults to false. If the string includes the prompt, provide its length in the
+resulting token sequence as `prompt_len`. Generated text alone can be scored
+with zero prompt length, but missing prompt context leaves initial contextual
+positions unscored. Retokenization, removed special tokens, or extracted reasoning
+can change token IDs or positions; original IDs preserve the exact generation
+sequence. For position-keyed schemes, adjust `start_position` if the text omits a
+known generated prefix.
+
+For SemStamp, use `input: {"type": "embeddings", "embeddings": [[...], ...]}`.
+Here `prompt_len` counts prompt sentences, and `eos_token_ids` must be empty.
+Use the same sentence encoder and segmentation as generation. The endpoint does
+not generate sentence embeddings or run sentence retries.
+
+Successful responses contain the same `kind` and evidence fields as the Rust
+and Python detectors: mean g-values, count statistics, keyed sampling costs,
+MPAC payload votes, or SemStamp sentence statistics. They contain no calibrated
+watermark verdict or probability of authorship. Empty or insufficient evidence
+has zero scored items and null statistics where appropriate. Invalid keys,
+parameters, prompt lengths, token IDs, embedding shapes, or scheme/input
+combinations return HTTP 400 in the standard `error` envelope. Missing text
+models return 404; malformed bodies, content types, and body limits follow the
+other server endpoints.
+
+The runnable example can generate and then detect returned text:
+
+```bash
+python examples/server/watermarking.py kgw --endpoint completions --detect
+```
+
+Set `MISTRALRS_WATERMARK_KEY` to the generation key. Use `--model` and
+`--vocab-size` when serving a model other than the example's Qwen configuration.
 
 ## SemStamp
 
@@ -190,7 +273,9 @@ sequence history, so clones and discarded branches do not advance shared state.
 
 CUDA and Metal single-sequence top-k sampling run the watermark transformation
 on the GPU. Existing top-k kernels identify candidates; Candle prepares filtered
-weights; the library applies its algorithm. One compact readback supplies the
+weights; the library's indexed API applies its algorithm directly to K candidates
+using their actual vocabulary IDs. No vocabulary-sized probability row is
+allocated for watermarking. One compact readback supplies the
 existing host draw and original reporting probabilities. No full probability
 vector is downloaded, and the library's strict scalar validation readback is
 avoided by its trusted tensor API.
@@ -203,7 +288,8 @@ existing host sampling and CPU watermarking. CUDA fused batch/resident and spars
 speculative verification remain ineligible for watermarked requests.
 
 See [GPU integration boundaries](/guides/customize/watermarking-gpu/) for exact
-library and host API gaps. This feature does not replace mistral's GPU backend.
+metadata costs and remaining host boundaries. This feature does not replace
+mistral's GPU backend.
 
 ## Detection and format
 

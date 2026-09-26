@@ -66,12 +66,13 @@ use crate::{
         SkillListQuery, SkillObject, SkillVersionObject,
     },
     speech_generation::__path_speech_generation,
+    watermark::{__path_detect_watermark, WatermarkDetectionInput, WatermarkDetectionRequest},
 };
 use mistralrs_core::{
     ApproximateUserLocation, CalibrationStatus, Function, ImageGenerationResponseFormat,
     NamedFunctionToolChoice, SearchContextSize, SerializedSession, Tool, ToolChoice, ToolType,
-    WebSearchContentType, WebSearchFilters, WebSearchImageSettings, WebSearchOptions,
-    WebSearchReturnTokenBudget, WebSearchUserLocation,
+    WatermarkEvidence, WebSearchContentType, WebSearchFilters, WebSearchImageSettings,
+    WebSearchOptions, WebSearchReturnTokenBudget, WebSearchUserLocation,
 };
 
 /// This is used to generate the OpenAPI docs.
@@ -116,7 +117,7 @@ use mistralrs_core::{
 pub fn get_openapi_doc(base_path: Option<&str>) -> utoipa::openapi::OpenApi {
     #[derive(OpenApi)]
     #[openapi(
-        paths(models, health, chatcompletions, anthropic_messages, anthropic_count_tokens, completions, embeddings, re_isq, calibration_start, calibration_status, calibration_apply, image_generation, speech_generation, create_response, get_response, delete_response, cancel_response, upload_skill, list_skills, upload_skill_version, list_skill_versions, load_lora_adapter, unload_lora_adapter, list_lora_adapters, unload_model, reload_model, get_model_status, tune_model, system_info, system_doctor, get_session, put_session, delete_session, list_files, upload_file, get_file, get_file_content, delete_file, list_container_files, get_container_file, get_container_file_content, resolve_agent_approval, metrics),
+        paths(models, health, chatcompletions, anthropic_messages, anthropic_count_tokens, completions, embeddings, detect_watermark, re_isq, calibration_start, calibration_status, calibration_apply, image_generation, speech_generation, create_response, get_response, delete_response, cancel_response, upload_skill, list_skills, upload_skill_version, list_skill_versions, load_lora_adapter, unload_lora_adapter, list_lora_adapters, unload_model, reload_model, get_model_status, tune_model, system_info, system_doctor, get_session, put_session, delete_session, list_files, upload_file, get_file, get_file_content, delete_file, list_container_files, get_container_file, get_container_file_content, resolve_agent_approval, metrics),
         components(schemas(
             ApprovalDecision,
             ApprovalDecisionRequest,
@@ -232,6 +233,9 @@ pub fn get_openapi_doc(base_path: Option<&str>) -> utoipa::openapi::OpenApi {
             TuneProfileRequest,
             UnloadLoraAdapterRequest,
             UrlCitation,
+            WatermarkDetectionInput,
+            WatermarkDetectionRequest,
+            WatermarkEvidence,
             WebSearchContentType,
             WebSearchFilters,
             WebSearchImageSettings,
@@ -283,6 +287,28 @@ mod tests {
     fn render() -> String {
         let doc = get_openapi_doc(None);
         serde_json::to_string_pretty(&doc).expect("openapi doc serializes") + "\n"
+    }
+
+    #[test]
+    fn watermark_detector_is_registered_and_documented() {
+        use crate::route_registry::{MISTRALRS_API_ROUTES, WATERMARK_DETECT_ROUTE};
+
+        assert!(MISTRALRS_API_ROUTES.contains(&WATERMARK_DETECT_ROUTE));
+        let value = serde_json::to_value(get_openapi_doc(None)).unwrap();
+        let operation = &value["paths"][WATERMARK_DETECT_ROUTE.path]["post"];
+        assert_eq!(
+            operation["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/WatermarkDetectionRequest"
+        );
+        assert_eq!(
+            operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/WatermarkEvidence"
+        );
+        for status in ["400", "404", "413", "415", "500", "503"] {
+            assert!(operation["responses"].get(status).is_some());
+        }
+        let prefixed = serde_json::to_value(get_openapi_doc(Some("/api"))).unwrap();
+        assert!(prefixed["paths"].get("/api/v1/watermark/detect").is_some());
     }
 
     #[test]

@@ -1489,6 +1489,54 @@
           }
         }
       }
+    },
+    "/v1/watermark/detect": {
+      "post": {
+        "tags": [
+          "Mistral.rs"
+        ],
+        "operationId": "detect_watermark",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WatermarkDetectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Uncalibrated, scheme-specific watermark evidence",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatermarkEvidence"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid watermark configuration or detection input"
+          },
+          "404": {
+            "description": "Text tokenization model was not found"
+          },
+          "413": {
+            "description": "Request body is too large"
+          },
+          "415": {
+            "description": "Request content type is not JSON"
+          },
+          "500": {
+            "description": "Detection or tokenization failed"
+          },
+          "503": {
+            "description": "Tokenization model is unavailable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -8959,6 +9007,317 @@
           }
         ],
         "description": "Selects a library watermark; vocabulary sizes refer to model output rows, including padding."
+      },
+      "WatermarkDetectionInput": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "tokens",
+              "type"
+            ],
+            "properties": {
+              "tokens": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                },
+                "description": "Original prompt-plus-generation vocabulary IDs."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "tokens"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "text",
+              "model",
+              "type"
+            ],
+            "properties": {
+              "add_special_tokens": {
+                "type": "boolean"
+              },
+              "model": {
+                "type": "string",
+                "description": "Serving model or alias used for tokenization."
+              },
+              "text": {
+                "type": "string",
+                "description": "Complete text to tokenize; no chat template is applied."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "text"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "embeddings",
+              "type"
+            ],
+            "properties": {
+              "embeddings": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "format": "float"
+                  }
+                },
+                "description": "Sentence embeddings from the same encoder used during SemStamp generation."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "embeddings"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "WatermarkDetectionRequest": {
+        "type": "object",
+        "required": [
+          "watermark",
+          "input"
+        ],
+        "properties": {
+          "eos_token_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "description": "Stop token scoring at the first generated EOS; only valid for token or text input."
+          },
+          "input": {
+            "$ref": "#/components/schemas/WatermarkDetectionInput"
+          },
+          "prompt_len": {
+            "type": "integer",
+            "description": "Prefix length in tokens, or sentences for embedding input; excluded from evidence.",
+            "minimum": 0
+          },
+          "watermark": {
+            "$ref": "#/components/schemas/WatermarkConfig"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WatermarkEvidence": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "tokens_scored",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "synthid"
+                ]
+              },
+              "mean_g_value": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              },
+              "tokens_scored": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "scheme",
+              "trials",
+              "successes",
+              "expected_rate",
+              "kind"
+            ],
+            "properties": {
+              "expected_rate": {
+                "type": "number",
+                "format": "double"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "count"
+                ]
+              },
+              "observed_rate": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              },
+              "scheme": {
+                "type": "string"
+              },
+              "successes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "trials": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "z_score": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "scheme",
+              "tokens_scored",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "sampling"
+                ]
+              },
+              "mean_cost": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              },
+              "scheme": {
+                "type": "string"
+              },
+              "tokens_scored": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "tokens_scored",
+              "payload",
+              "votes",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "mpac"
+                ]
+              },
+              "payload": {
+                "type": "array",
+                "items": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "int32",
+                  "minimum": 0
+                }
+              },
+              "tokens_scored": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "votes": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              },
+              "winning_fraction": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "sentences_scored",
+              "valid_sentences",
+              "expected_rate",
+              "kind"
+            ],
+            "properties": {
+              "expected_rate": {
+                "type": "number",
+                "format": "double"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "semstamp"
+                ]
+              },
+              "sentences_scored": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "valid_fraction": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              },
+              "valid_sentences": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "z_score": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              }
+            }
+          }
+        ],
+        "description": "Uncalibrated, scheme-specific evidence; scores are not probabilities of authorship."
       },
       "WebSearchContentType": {
         "type": "string",

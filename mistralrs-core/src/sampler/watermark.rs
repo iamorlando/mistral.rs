@@ -1,4 +1,5 @@
 use candle_core::{DType, Result, Tensor};
+use llm_watermarking::tensor::IndexedCandidates;
 
 use super::{argmax_f32, Logprobs, Sampler};
 use crate::WatermarkTensor;
@@ -147,20 +148,17 @@ impl Sampler {
             let threshold = reporting.narrow(0, 0, 1)?.affine(self.min_p, 0.0)?;
             sampling = sampling.mul(&sampling.broadcast_gt(&threshold)?.to_dtype(DType::F32)?)?;
         }
-        // The library requires vocabulary indexing; compact ranks must never be hashed as token IDs.
-        let dense = Tensor::zeros(vocab_size, DType::F32, packed.device())?
-            .scatter_add(&indices, &sampling, 0)?;
+        let candidates = IndexedCandidates::new_trusted(&indices, vocab_size)?;
         let watermark = self
             .watermark
             .as_ref()
             .expect("watermark configured")
             .resolve(vocab_size)?;
         let (marked, keyed_selection) =
-            match watermark.apply_tensor(&dense, step.context, step.prompt_len)? {
+            match watermark.apply_indexed(&sampling, &candidates, step.context, step.prompt_len)? {
                 WatermarkTensor::Probabilities(probs) => (probs, false),
                 WatermarkTensor::SelectionScores(scores) => (scores, true),
             };
-        let marked = marked.index_select(&indices, 0)?;
         // Keep the existing single compact readback for host selection and unwatermarked reporting probabilities.
         let result = Tensor::cat(&[&marked, &token_ids, &reporting], 0)?.to_vec1::<f32>()?;
         Ok(WatermarkCandidates {
@@ -191,6 +189,10 @@ mod tests {
         sync::{Arc, Mutex},
     };
 
+    const TEST_VOCAB_SIZE: usize = 257;
+    const TEST_MAX_TOP_K: usize = 128;
+    const TEST_TEMPERATURE: f32 = 0.8;
+
     fn sampler(config: &crate::WatermarkConfig, top_p: f64, min_p: f64) -> Sampler {
         Sampler::new(
             Some(0.8),
@@ -212,66 +214,121 @@ mod tests {
     }
 
     fn compact_parity(device: &Device) -> anyhow::Result<()> {
-        let logits = [2.0f32, -3.0, 0.0, -4.0, -2.0, 1.0, -5.0, 3.0];
-        let ids = [7u32, 0, 5, 2];
-        let maximum = 3.0 / 0.8;
+        let logits = (0..TEST_VOCAB_SIZE)
+            .map(|id| ((id * 73 + 19) % TEST_VOCAB_SIZE) as f32 / 32.0 - 4.0)
+            .collect::<Vec<_>>();
+        let mut ids = (0..TEST_VOCAB_SIZE as u32).collect::<Vec<_>>();
+        ids.sort_by(|a, b| logits[*b as usize].total_cmp(&logits[*a as usize]));
+        let maximum = logits[ids[0] as usize] / TEST_TEMPERATURE;
         let denominator: f32 = logits
             .iter()
-            .map(|value| (value / 0.8 - maximum).exp())
+            .map(|value| (value / TEST_TEMPERATURE - maximum).exp())
             .sum();
-        let mut packed = ids
-            .iter()
-            .map(|id| logits[*id as usize])
-            .collect::<Vec<_>>();
-        packed.extend(ids.map(|id| id as f32));
-        packed.extend([denominator, maximum]);
-        let packed = Tensor::new(packed.as_slice(), device)?;
-        let step = WatermarkStep {
-            context: &[1, 2, 3, 4],
-            prompt_len: 4,
-            return_logprobs: false,
-            sample_speculative: false,
-            multiple_sequences: false,
-        };
-        for config in crate::watermark::token_configs(logits.len()) {
-            for (top_p, min_p) in [(1.0, 0.0), (0.9, 0.01), (0.7, 0.1)] {
-                let sampler = sampler(&config, top_p, min_p);
-                let expected = sampler.speculative_target_probs(
-                    Tensor::new(&logits, &Device::Cpu)?,
-                    step.context,
-                    step.prompt_len,
-                )?;
-                let actual =
-                    sampler.watermark_candidates(&packed, ids.len(), logits.len(), &step)?;
-                assert_eq!(actual.token_ids, ids);
-                if actual.keyed_selection {
-                    let selected = actual.token_ids[argmax_f32(&actual.values)? as usize];
-                    assert_eq!(
-                        expected.sampling[selected as usize],
-                        1.0,
-                        "{}",
-                        config.scheme()
-                    );
-                } else {
-                    for (rank, id) in ids.iter().enumerate() {
+        let histories: &[(&[u32], usize)] = &[
+            (&[1], 1),
+            (&[1, 2, 3, 4], 4),
+            (&[1, 2, 3, 4, 5], 4),
+            (&[1, 2, 3, 4, 1, 2, 3, 4], 4),
+        ];
+        for k in [1, 4, TEST_MAX_TOP_K] {
+            let ids = &ids[..k];
+            let mut packed = ids
+                .iter()
+                .map(|id| logits[*id as usize])
+                .collect::<Vec<_>>();
+            packed.extend(ids.iter().map(|id| *id as f32));
+            packed.extend([denominator, maximum]);
+            let packed = Tensor::new(packed.as_slice(), device)?;
+            for mut config in crate::watermark::token_configs(logits.len()) {
+                match &mut config {
+                    crate::WatermarkConfig::Kgw { context_width, .. }
+                    | crate::WatermarkConfig::Mpac { context_width, .. } => {
+                        *context_width = 2;
+                    }
+                    crate::WatermarkConfig::Exponential {
+                        start_position,
+                        sequence_len,
+                        ..
+                    }
+                    | crate::WatermarkConfig::InverseTransform {
+                        start_position,
+                        sequence_len,
+                        ..
+                    } => {
+                        *start_position = usize::MAX;
+                        *sequence_len = 7;
+                    }
+                    _ => {}
+                }
+                for (top_p, min_p) in [(1.0, 0.0), (0.9, 0.01), (0.7, 0.1)] {
+                    let mut sampler = sampler(&config, top_p, min_p);
+                    sampler.top_k = k as i64;
+                    for &(context, prompt_len) in histories {
+                        let step = WatermarkStep {
+                            context,
+                            prompt_len,
+                            return_logprobs: false,
+                            sample_speculative: false,
+                            multiple_sequences: false,
+                        };
+                        let expected = sampler.speculative_target_probs(
+                            Tensor::new(logits.as_slice(), &Device::Cpu)?,
+                            context,
+                            prompt_len,
+                        )?;
+                        let actual =
+                            sampler.watermark_candidates(&packed, k, logits.len(), &step)?;
+                        assert_eq!(actual.token_ids, ids);
+                        if actual.keyed_selection {
+                            let selected = actual.token_ids[argmax_f32(&actual.values)? as usize];
+                            assert_eq!(
+                                expected.sampling[selected as usize],
+                                1.0,
+                                "{}",
+                                config.scheme()
+                            );
+                        } else {
+                            let mass: f32 = actual.values.iter().sum();
+                            for (rank, id) in ids.iter().enumerate() {
+                                assert!(
+                                    (actual.values[rank] / mass - expected.sampling[*id as usize])
+                                        .abs()
+                                        < 3e-4,
+                                    "{} K={k} context={context:?} rank={rank}",
+                                    config.scheme()
+                                );
+                                if expected.sampling[*id as usize] == 0.0 {
+                                    assert_eq!(actual.values[rank], 0.0);
+                                }
+                            }
+                        }
+                        for (rank, id) in ids.iter().enumerate() {
+                            assert!(
+                                (actual.reporting[rank] - expected.reporting[*id as usize]).abs()
+                                    < 1e-6
+                            );
+                        }
+                        let replay = sampler.clone().watermark_candidates(
+                            &packed,
+                            k,
+                            logits.len(),
+                            &step,
+                        )?;
+                        assert_eq!(actual.values, replay.values);
+                        let sample = sampler.sample_watermarked_candidates(
+                            &packed,
+                            k,
+                            logits.len(),
+                            &step,
+                            Arc::new(Mutex::new(Isaac64Rng::seed_from_u64(42))),
+                        )?;
+                        assert!(expected.sampling[sample.token as usize] > 0.0);
                         assert!(
-                            (actual.values[rank] - expected.sampling[*id as usize]).abs() < 3e-4,
-                            "{} rank {rank}",
-                            config.scheme()
+                            (sample.logprob - expected.reporting[sample.token as usize].ln()).abs()
+                                < 1e-5
                         );
                     }
                 }
-                let sample = sampler.sample_watermarked_candidates(
-                    &packed,
-                    ids.len(),
-                    logits.len(),
-                    &step,
-                    Arc::new(Mutex::new(Isaac64Rng::seed_from_u64(42))),
-                )?;
-                assert!(expected.sampling[sample.token as usize] > 0.0);
-                assert!(
-                    (sample.logprob - expected.reporting[sample.token as usize].ln()).abs() < 1e-5
-                );
             }
         }
         Ok(())

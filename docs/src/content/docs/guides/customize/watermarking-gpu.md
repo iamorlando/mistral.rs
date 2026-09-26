@@ -1,6 +1,6 @@
 ---
 title: Watermark GPU integration boundaries
-description: Device-resident integration, remaining library API gaps, and host sampling boundaries.
+description: Compact candidate integration and remaining host sampling boundaries.
 ---
 
 The watermark adapter uses the same Candle package as mistral. GPU algorithms
@@ -12,8 +12,10 @@ in mistral. The library's CUDA feature uses NVRTC for its own metadata kernels.
 The single-sequence CUDA/Metal top-k path calls the existing
 `cuda_topk_logits_f32_packed` or `metal_topk_logits_packed` operation. It retains
 actual vocabulary token IDs, original logits, and the existing softmax normalizer.
-Candle prepares the same top-p/min-p masks as the host sampler, then the library's
-prepared operation runs with `apply_trusted`. The host selects a token after its
+Candle prepares the same top-p/min-p masks as the host sampler. The adapter binds
+the U32 candidate IDs and original vocabulary size with
+`IndexedCandidates::new_trusted`, then calls the scheme's `prepare_indexed` and
+`apply_trusted` on the K filtered weights. The host selects a token after its
 existing compact readback. Keyed sampler outputs use argmax; probability-transform
 outputs use the existing weighted categorical draw.
 
@@ -27,23 +29,26 @@ preserves logprob semantics. There is one readback, not a CPU round trip for the
 watermark operation, and no vocabulary-sized probability download. The adapter
 uses no library strict-validation scalar readback.
 
-## Library improvement: indexed candidates
+## Compact probabilities and vocabulary metadata
 
-The current library accepts only dense `[vocab_size]` rows. Mistral consequently
-scatters its K candidates into a zero-filled vocabulary row on the same device,
-then gathers the K results. This is correct but allocates vocabulary-sized work
-and prevents efficient use of compact candidate buffers.
+All six token schemes consume compact `[K]` weights and return values in the same
+candidate order. The adapter no longer scatters weights into a zero-filled
+vocabulary row or gathers dense results. Top-k supplies unique, in-range token
+IDs; filtering supplies finite nonnegative weights with positive mass. These
+invariants permit the trusted constructors and application without a validation
+readback. Zero weights keep excluded candidates ineligible.
 
-A useful library extension would accept:
+Hashes and partitions still use actual vocabulary IDs and the full vocabulary
+definition. SynthID and exponential race hash only K candidates. KGW and MPAC
+still reconstruct the full-vocabulary partition for each changed context;
+Unigram and inverse transform cache full-vocabulary metadata per device. The
+library owns these algorithms. Removing dense probability work does not remove
+all O(V) metadata work or establish a throughput improvement.
 
-- Device-resident candidate token IDs and their filtered weights.
-- The original vocabulary size and the same key/context/position parameters.
-- A result in the same candidate order, on the same device, with no readback.
-
-The partition and hash formats must continue using actual vocabulary token IDs
-and the full vocabulary definition. Hashing candidate ranks would break detection.
-The library should own this indexed algorithm support; mistral should not recreate
-its hashes, partitions, or tournament calculations.
+The adapter uses the sequence's existing host history and prompt length.
+Position-keyed schemes use the configured start position plus the generated-token
+count, modulo their period. Replaying or discarding a branch does not advance
+shared watermark state.
 
 ## Host boundary: fused CUDA samplers
 
@@ -53,16 +58,17 @@ probability tensor at the needed point. Removing their watermark exclusion would
 silently skip watermarking or use the wrong acceptance distribution.
 
 They remain excluded. Supporting them requires an explicit host insertion point
-or composable sampling stages, plus the library's indexed/batched metadata APIs.
+or composable sampling stages that apply watermarks before selection and use the
+correct watermarked distributions and branch positions for acceptance.
 Implementing a second GPU sampler merely to bypass this boundary would duplicate
 mistral's inference stack and is outside this integration.
 
-The library also prepares context-dependent operations from host `&[u32]` history.
-A fully resident sampler would benefit from preparation that consumes device token
-history, prompt lengths, and per-row positions. Reading committed tokens back just
-to construct watermark seeds would add synchronization; this adapter does not add
-that workaround. Batched calls should preserve independent per-sequence keys,
-contexts, positions, payloads, and retry semantics.
+The library now provides `DeviceHistory`, device position preparation, and
+`PreparedIndexedBatch` for independent rows. These APIs are available for future
+resident integration, but the current top-k adapter does not use them. A resident
+host must preserve independent per-sequence keys, histories, prompt lengths,
+positions, payloads, and retry semantics. The library batch helper submits row
+operations; it does not fuse mistral's filtering, selection, or acceptance stages.
 
 ## SemStamp boundary
 
@@ -71,12 +77,15 @@ Mistral's token sampler has no sentence-encoder and candidate-sentence retry hoo
 This is a workflow mismatch, not a missing CUDA or Metal implementation in the
 library. Its embedding operations are exposed through Rust and Python helpers;
 ordinary text-generation requests reject the scheme explicitly.
+`POST /v1/watermark/detect` accepts supplied SemStamp sentence embeddings for CPU
+detection; it does not add the missing generation workflow.
 
 ## Verification
 
 Tests cover every token scheme against the CPU reference, actual token IDs in
-compact rows, filtering order, exclusion support, original reporting probabilities,
-replay, key-stream positions, and SemStamp embedding evidence. Feature-gated CUDA
+compact rows with K=1, K=4, and K=128, filtering order, exclusion support, original
+reporting probabilities, warmup, repeated contexts, replay, wrapped key-stream
+positions, and SemStamp embedding evidence. Feature-gated CUDA
 and Metal tests execute both the device tensor operations and the existing GPU
 top-k sampling entry point. Run them on the corresponding hardware:
 
