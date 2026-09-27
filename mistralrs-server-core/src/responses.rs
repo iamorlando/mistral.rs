@@ -1980,6 +1980,7 @@ async fn parse_openresponses_request(
 
     // Convert to ChatCompletionRequest
     let chat_request = ChatCompletionRequest {
+        sampling_trace: None,
         watermark: oairequest.watermark,
         messages: Either::Left(final_messages.clone()),
         model: oairequest.model,

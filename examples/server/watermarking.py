@@ -1,4 +1,4 @@
-"""Generate watermarked text and optionally submit it to the HTTP detector."""
+"""Generate, inspect sampling traces, compare watermarking, and detect output."""
 
 import argparse
 import json
@@ -47,6 +47,13 @@ def main():
     )
     parser.add_argument("--base-url", default="http://localhost:1234")
     parser.add_argument("--model", default="Qwen/Qwen3-4B")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--max-tokens", type=int, default=512)
+    parser.add_argument("--trace", action="store_true", help="Include bounded sampling diagnostics")
+    parser.add_argument("--compare", action="store_true", help="Trace both an unmarked and marked run")
+    parser.add_argument("--trace-steps", type=int, default=32)
+    parser.add_argument("--trace-candidates", type=int, default=32)
+    parser.add_argument("--trace-layers", type=int, default=8)
     parser.add_argument(
         "--vocab-size", type=int, help="Model output vocabulary, including padding"
     )
@@ -56,6 +63,8 @@ def main():
         help="Detect the returned text using model retokenization",
     )
     args = parser.parse_args()
+    if (args.trace or args.compare) and args.endpoint not in ("chat/completions", "completions"):
+        parser.error("sampling traces require chat/completions or completions")
     config_path = (
         Path(__file__).resolve().parents[1] / "watermarking" / f"{args.scheme}.json"
     )
@@ -70,13 +79,26 @@ def main():
         "top_k": 40,
         "enable_thinking": False,
         "watermark": config,
+        "seed": args.seed,
     }
     if args.endpoint == "completions":
-        body.update(prompt=text, max_tokens=512)
+        body.update(prompt=text, max_tokens=args.max_tokens)
     elif args.endpoint == "responses":
-        body.update(input=text, max_output_tokens=512)
+        body.update(input=text, max_output_tokens=args.max_tokens)
     else:
-        body.update(messages=[{"role": "user", "content": text}], max_tokens=512)
+        body.update(messages=[{"role": "user", "content": text}], max_tokens=args.max_tokens)
+    if args.trace or args.compare:
+        body["sampling_trace"] = {
+            "max_steps": args.trace_steps,
+            "max_candidates": args.trace_candidates,
+            "max_layers": args.trace_layers,
+        }
+        body["logprobs"] = 10 if args.endpoint == "completions" else True
+        if args.endpoint == "chat/completions":
+            body["top_logprobs"] = 10
+    if args.compare:
+        baseline = {name: value for name, value in body.items() if name != "watermark"}
+        print(json.dumps({"without_watermark": post(args.base_url, args.endpoint, baseline)}, indent=2))
     response = post(args.base_url, args.endpoint, body)
     print(json.dumps(response, indent=2))
     if args.detect:

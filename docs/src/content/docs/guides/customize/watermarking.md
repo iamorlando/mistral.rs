@@ -235,6 +235,97 @@ python examples/server/watermarking.py kgw --endpoint completions --detect
 Set `MISTRALRS_WATERMARK_KEY` to the generation key. Use `--model` and
 `--vocab-size` when serving a model other than the example's Qwen configuration.
 
+## Inspect sampling with and without watermarking
+
+Chat completions and completions accept an opt-in `sampling_trace` extension:
+
+```json
+{
+  "model": "default",
+  "messages": [{"role": "user", "content": "Write a story about a lunar garden."}],
+  "max_tokens": 64,
+  "seed": 42,
+  "logprobs": true,
+  "top_logprobs": 10,
+  "sampling_trace": {"max_steps": 32, "max_candidates": 32, "max_layers": 8}
+}
+```
+
+Omit `watermark` for a baseline, or add the same watermark configuration used for
+generation. `/v1/completions` uses its numeric `logprobs` option instead of the
+chat boolean. Tracing requires logprobs and `n=1`; completions also require
+`best_of` absent or 1. Speculative and block diffusion decoding are rejected.
+Chat tracing requires a model without registered server tool callbacks and no
+automatic tool execution, tool rounds, tool dispatch, or input files. Ordinary
+client-handled function calls and their grammar retries are supported.
+
+Read `choices[i].sampling_trace.steps`. Each step includes the actual selected
+token ID, generated-token index, context length, and accepted attempt number
+(0 normally, 1 after a grammar retry). The first candidate is always the selected
+token. Remaining rows alternate leading pre/post candidates, deduplicated with
+ties ordered by vocabulary ID. Keyed schemes use leading input candidates;
+greedy input ranking uses reporting probabilities. `candidate_count` is the
+complete vocabulary row length; `candidates_truncated` means some rows were
+omitted, not that their probabilities are zero. Token text is a decoded piece,
+which need not be a whole word.
+
+| Candidate field | Meaning |
+| --- | --- |
+| `input_logit` | Actual sampler input before penalties; a grammar retry can already have masked it. |
+| `processed_logit` | After penalties and custom processors, before temperature. |
+| `reporting_probability` | After temperature and softmax, before filtering and watermarking; existing logprobs retain this meaning. |
+| `pre_watermark_probability` | Filtered input normalized over the full vocabulary row. |
+| `post_watermark_probability` | Actual categorical sampling weights normalized over the full row. |
+| `post_watermark_log_probability` | Natural log of that probability, not a model logit. |
+
+Displayed rows are never renormalized as a smaller distribution. Baseline
+pre/post probabilities match. Null logits represent nonfinite masked values;
+zero post probability has a null log probability. Position-keyed samplers omit
+post probabilities, expose typed `selection_score` values, and report
+`selection_rule: "keyed_argmax"`. A null score with
+`selection_score_status: "negative_infinity"` is excluded from selection.
+Greedy reports `selection_rule: "greedy"` and skips watermarking.
+
+KGW and Unigram expose `membership.kind: "green"` with `favored: true` for green
+and false for red. MPAC uses `kind: "favored"` plus payload position and symbol;
+unfavored includes other colors and the unassigned vocabulary remainder. Full
+MPAC colors are not exported. SynthID `layers` contain candidate-aligned g-values,
+input/output probabilities, and full-support green mass and normalization.
+They show tournament-equivalent reweighting, not invented contestant brackets.
+Warmup and repeated-context skips are explicit and have no fabricated membership
+or layers. Inverse transform also exposes threshold, rank, and CDF intervals in
+the original input weight units. Keys and prompt text are absent from traces.
+
+Defaults are 32 steps, 32 candidates, and 8 captured layers. Limits are 256 steps,
+128 candidates, and 32 layers; zero layers is allowed. The product
+`max_steps * max_candidates * max(1, max_layers)` must not exceed 65,536.
+Invalid limits return HTTP 400. Capture also has an 8 MiB serialized trace budget,
+including allowance for trace framing and summaries. Exceeding a step/byte budget
+stops observation while generation continues; `truncated` and
+`truncation_reason` explain why. `layers_truncated` means only a prefix of layers
+was captured; all configured watermark layers still execute.
+
+With `stream: true`, ordinary SSE choice chunks include `sampling_trace` with
+newly committed steps. Trace chunks can have empty text deltas: use
+`generated_index`, since UTF-8, stop strings, tool calls, and reasoning parsing can
+buffer text. Each step is delivered once, followed by a final trace summary
+before the terminal choice and `[DONE]`. Stop/EOS selections can appear in traces
+even when their text is hidden. Streaming trace history is drained as it is sent.
+
+This uses the existing host logprob sampling path, including when the model runs
+on a GPU. There is no additional device readback for diagnostics. Requests without
+`sampling_trace` keep their existing sampler path and omit trace response fields.
+Full compact GPU trace export is not part of this HTTP path.
+
+```bash
+python examples/server/watermarking.py synthid --compare --max-tokens 64
+python examples/server/watermarking.py kgw --endpoint completions --trace --detect
+```
+
+Both comparison runs use the same seed and settings. Once their generated
+prefixes differ, subsequent distributions have different contexts. The pre/post
+values within a marked step compare the watermark effect on the same prefix.
+
 ## SemStamp
 
 SemStamp accepts sentence embeddings from a fixed encoder. It needs complete

@@ -607,6 +607,7 @@ impl AnthropicMessagesRequest {
         }
 
         Ok(ChatCompletionRequest {
+            sampling_trace: None,
             watermark: self.watermark,
             messages: Either::Left(messages),
             model: self.model,
@@ -2079,6 +2080,7 @@ mod tests {
         ChatCompletionChunkResponse {
             id: "msg_test".to_string(),
             choices: vec![ChunkChoice {
+                sampling_trace: None,
                 finish_reason: finish_reason.map(str::to_string),
                 stop_sequence: stop_sequence.map(str::to_string),
                 index: 0,
@@ -2708,6 +2710,7 @@ mod tests {
         let response = ChatCompletionResponse {
             id: "msg_test".to_string(),
             choices: vec![Choice {
+                sampling_trace: None,
                 finish_reason: "stop".to_string(),
                 stop_sequence: Some("END".to_string()),
                 index: 0,

@@ -1705,6 +1705,7 @@ impl Runner {
                 messages,
                 sampling_params: SamplingParams {
                     watermark: request.watermark.as_ref().map(|config| config.to_core()),
+                    sampling_trace: None,
                     temperature: request.temperature,
                     top_k: request.top_k,
                     top_p: request.top_p,
@@ -1937,6 +1938,7 @@ impl Runner {
                 },
                 sampling_params: SamplingParams {
                     watermark: request.watermark.as_ref().map(|config| config.to_core()),
+                    sampling_trace: None,
                     temperature: request.temperature,
                     top_k: request.top_k,
                     top_p: request.top_p,
@@ -2668,6 +2670,7 @@ impl Runner {
                 messages,
                 sampling_params: SamplingParams {
                     watermark: request.watermark.as_ref().map(|config| config.to_core()),
+                    sampling_trace: None,
                     temperature: request.temperature,
                     top_k: request.top_k,
                     top_p: request.top_p,
@@ -2793,6 +2796,7 @@ impl Runner {
                 },
                 sampling_params: SamplingParams {
                     watermark: request.watermark.as_ref().map(|config| config.to_core()),
+                    sampling_trace: None,
                     temperature: request.temperature,
                     top_k: request.top_k,
                     top_p: request.top_p,

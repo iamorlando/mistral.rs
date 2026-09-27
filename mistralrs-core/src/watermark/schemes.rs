@@ -375,6 +375,43 @@ pub enum WatermarkTensor {
 }
 
 impl Watermark {
+    pub(crate) fn apply_traced(
+        &self,
+        probs: &mut [f32],
+        context: &[u32],
+        prompt_len: usize,
+        options: &llm_watermarking::trace::TraceOptions,
+    ) -> Result<llm_watermarking::trace::ScalarSamplingTrace> {
+        let generated = context
+            .len()
+            .checked_sub(prompt_len)
+            .ok_or_else(|| candle_core::Error::Msg("prompt_len exceeds token count".into()))?;
+        let result = match &self.algorithm {
+            Algorithm::Synthid(w) => w.apply_traced(probs, context, prompt_len, options),
+            Algorithm::Kgw(w) => w.apply_traced(probs, context, prompt_len, options),
+            Algorithm::Unigram(w) => w.apply_traced(probs, options),
+            Algorithm::Mpac(w, payload) => {
+                w.apply_traced(probs, context, prompt_len, payload, options)
+            }
+            Algorithm::Exponential(w, start, period) => w
+                .sample_traced(probs, position(*start, generated, *period), options)
+                .map(|(token, trace)| {
+                    probs.fill(0.0);
+                    probs[token as usize] = 1.0;
+                    trace
+                }),
+            Algorithm::InverseTransform(w, start, period) => w
+                .sample_traced(probs, position(*start, generated, *period), options)
+                .map(|(token, trace)| {
+                    probs.fill(0.0);
+                    probs[token as usize] = 1.0;
+                    trace
+                }),
+            Algorithm::Semstamp(_) => candle_core::bail!("{SEMSTAMP_GENERATION_ERROR}"),
+        };
+        result.map_err(candle_core::Error::wrap)
+    }
+
     pub fn new(config: &WatermarkConfig) -> anyhow::Result<Self> {
         let algorithm = match config.algorithm_config()? {
             AlgorithmConfig::Synthid(c) => {
@@ -672,6 +709,10 @@ pub(crate) struct RequestWatermark {
 }
 
 impl RequestWatermark {
+    pub(crate) fn scheme(&self) -> &'static str {
+        self.config.scheme()
+    }
+
     pub(crate) fn new(config: &WatermarkConfig) -> anyhow::Result<Self> {
         config.validate_generation()?;
         Ok(Self {

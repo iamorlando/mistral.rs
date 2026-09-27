@@ -282,6 +282,47 @@ pub(crate) async fn finish_or_add_toks_to_seq(
 
     // Handle streaming requests
     if seq.get_mut_group().is_streaming {
+        if let Some(trace) = seq
+            .sampling_trace
+            .as_mut()
+            .and_then(|state| state.take(is_done.is_some()))
+        {
+            let index = seq.get_response_index();
+            if seq.get_mut_group().is_chat {
+                seq.add_streaming_chunk_choice_to_group(crate::ChunkChoice {
+                    sampling_trace: Some(trace),
+                    finish_reason: None,
+                    stop_sequence: None,
+                    index,
+                    delta: crate::Delta {
+                        content: None,
+                        role: "assistant".into(),
+                        tool_calls: None,
+                        reasoning_content: None,
+                    },
+                    logprobs: None,
+                });
+            } else {
+                seq.add_streaming_completion_chunk_choice_to_group(crate::CompletionChunkChoice {
+                    sampling_trace: Some(trace),
+                    text: String::new(),
+                    index,
+                    logprobs: None,
+                    finish_reason: None,
+                });
+            }
+            if seq
+                .get_mut_group()
+                .maybe_send_streaming_response(seq, this.name().clone(), None)
+                .await
+                .is_err()
+            {
+                seq.set_state(SequenceState::Done(StopReason::Canceled));
+                this.reset_non_granular_state();
+                return Ok(());
+            }
+        }
+
         let mut tool_use_still_possible = false;
         let mut tool_use_is_done = false;
         if let Some(d) = tool_detection_text(seq, hidden_stop.as_deref()) {
@@ -381,6 +422,7 @@ pub(crate) async fn finish_or_add_toks_to_seq(
                         let emission_count = streaming_emissions.len();
                         for (idx, emission) in streaming_emissions.iter().enumerate() {
                             seq.add_streaming_chunk_choice_to_group(crate::ChunkChoice {
+                                sampling_trace: None,
                                 delta: crate::Delta {
                                     content: Some(fixup_sentencepiece!(emission.text)),
                                     role: "assistant".to_string(),
@@ -405,6 +447,7 @@ pub(crate) async fn finish_or_add_toks_to_seq(
                         if seq.return_logprobs() {
                             for emission in &streaming_emissions {
                                 seq.add_streaming_chunk_choice_to_group(crate::ChunkChoice {
+                                    sampling_trace: None,
                                     delta: crate::Delta {
                                         content: None,
                                         role: "assistant".to_string(),
@@ -419,6 +462,7 @@ pub(crate) async fn finish_or_add_toks_to_seq(
                             }
                         }
                         seq.add_streaming_chunk_choice_to_group(crate::ChunkChoice {
+                            sampling_trace: None,
                             delta: crate::Delta {
                                 content: fixup_sentencepiece!(Option content_delta),
                                 role: "assistant".to_string(),
@@ -437,6 +481,7 @@ pub(crate) async fn finish_or_add_toks_to_seq(
                         for (idx, emission) in streaming_emissions.iter().enumerate() {
                             seq.add_streaming_completion_chunk_choice_to_group(
                                 crate::CompletionChunkChoice {
+                                    sampling_trace: None,
                                     text: fixup_sentencepiece!(emission.text),
                                     index: seq.get_response_index(),
                                     finish_reason: if idx + 1 == emission_count {
@@ -451,6 +496,7 @@ pub(crate) async fn finish_or_add_toks_to_seq(
                         if streaming_emissions.is_empty() && is_done.is_some() {
                             seq.add_streaming_completion_chunk_choice_to_group(
                                 crate::CompletionChunkChoice {
+                                    sampling_trace: None,
                                     text: String::new(),
                                     index: seq.get_response_index(),
                                     finish_reason: is_done.map(|reason| reason.to_string()),
@@ -461,6 +507,7 @@ pub(crate) async fn finish_or_add_toks_to_seq(
                     } else {
                         seq.add_streaming_completion_chunk_choice_to_group(
                             crate::CompletionChunkChoice {
+                                sampling_trace: None,
                                 text: fixup_sentencepiece!(delta),
                                 index: seq.get_response_index(),
                                 finish_reason: is_done.map(|x| x.to_string()),
@@ -610,7 +657,12 @@ pub(crate) async fn finish_or_add_toks_to_seq(
                     reason = StopReason::ToolCalls;
                 }
 
+                let sampling_trace = seq
+                    .sampling_trace
+                    .as_mut()
+                    .and_then(|trace| trace.take(true));
                 let choice = crate::Choice {
+                    sampling_trace,
                     finish_reason: fixup_sentencepiece!(reason),
                     stop_sequence: response_stop_sequence(Some(reason), hidden_stop.as_deref()),
                     index: seq.get_response_index(),
@@ -624,7 +676,12 @@ pub(crate) async fn finish_or_add_toks_to_seq(
                 };
                 seq.add_choice_to_group(choice);
             } else {
+                let sampling_trace = seq
+                    .sampling_trace
+                    .as_mut()
+                    .and_then(|trace| trace.take(true));
                 let choice = crate::CompletionChoice {
+                    sampling_trace,
                     finish_reason: fixup_sentencepiece!(reason),
                     index: seq.get_response_index(),
                     text,
@@ -1409,31 +1466,48 @@ pub async fn sample_sequence(
     let sampler = seq.sampler();
     let ctx_clone = seq.get_toks().to_vec();
     let prompt_len = seq.prompt_tokens();
+    let trace_options = seq
+        .sampling_trace
+        .as_mut()
+        .and_then(|trace| trace.capture(ctx_clone.len() - prompt_len));
+    let sample = move |logits,
+                       context: Vec<u32>,
+                       rng,
+                       attempt|
+          -> Result<(Logprobs, Option<crate::sampling_trace::SamplingTraceStep>)> {
+        if let Some(options) = trace_options {
+            let (token, mut trace) = sampler.sample_traced(
+                logits,
+                crate::sampler::TraceStepContext {
+                    context: &context,
+                    prompt_len,
+                    options,
+                },
+                rng,
+            )?;
+            trace.attempt = attempt;
+            Ok((token, Some(trace)))
+        } else {
+            sampler
+                .sample(
+                    logits,
+                    &context,
+                    prompt_len,
+                    return_logprobs,
+                    rng,
+                    sample_speculative,
+                    multiple_sequences,
+                )
+                .map(|token| (token, None))
+        }
+    };
+    let first_sample = sample.clone();
     let rng_clone = rng.clone();
     let logits_clone = logits.clone();
-    let first_lobprobs_response = if use_async_pool {
-        tokio_rayon::spawn(move || {
-            sampler.sample(
-                logits_clone,
-                &ctx_clone,
-                prompt_len,
-                return_logprobs,
-                rng_clone,
-                sample_speculative,
-                multiple_sequences,
-            )
-        })
-        .await?
+    let (first_lobprobs_response, first_trace) = if use_async_pool {
+        tokio_rayon::spawn(move || first_sample(logits_clone, ctx_clone, rng_clone, 0)).await?
     } else {
-        sampler.sample(
-            logits_clone,
-            &ctx_clone,
-            prompt_len,
-            return_logprobs,
-            rng_clone,
-            sample_speculative,
-            multiple_sequences,
-        )?
+        first_sample(logits_clone, ctx_clone, rng_clone, 0)?
     };
 
     let stop_token_requires_tool = seq.tool_call_state.as_ref().is_some_and(|state| {
@@ -1484,39 +1558,18 @@ pub async fn sample_sequence(
         }
         SequenceRecognizer::None => None,
     };
-    let second_logprobs_response = match bias_if_not_allowed {
+    let (second_logprobs_response, trace) = match bias_if_not_allowed {
         Some(acc) => {
             let new_logits = (&logits + Tensor::from_slice(&acc, acc.len(), logits.device())?)?;
-
             let ctx_clone = seq.get_toks().to_vec();
             let rng_clone = rng.clone();
-            let sampler = seq.sampler();
             if use_async_pool {
-                tokio_rayon::spawn(move || {
-                    sampler.sample(
-                        new_logits,
-                        &ctx_clone,
-                        prompt_len,
-                        return_logprobs,
-                        rng_clone,
-                        sample_speculative,
-                        multiple_sequences,
-                    )
-                })
-                .await?
+                tokio_rayon::spawn(move || sample(new_logits, ctx_clone, rng_clone, 1)).await?
             } else {
-                sampler.sample(
-                    new_logits,
-                    &ctx_clone,
-                    prompt_len,
-                    return_logprobs,
-                    rng_clone,
-                    sample_speculative,
-                    multiple_sequences,
-                )?
+                sample(new_logits, ctx_clone, rng_clone, 1)?
             }
         }
-        None => first_lobprobs_response,
+        None => (first_lobprobs_response, first_trace),
     };
 
     match seq.recognizer {
@@ -1543,6 +1596,9 @@ pub async fn sample_sequence(
         }
     }
 
+    if let (Some(state), Some(trace)) = (&mut seq.sampling_trace, trace) {
+        state.record(trace)?;
+    }
     Ok(second_logprobs_response)
 }
 
@@ -1561,6 +1617,61 @@ mod tests {
         sampler::Sampler,
         sequence::{SeqStepType, SequenceGroup},
     };
+
+    #[tokio::test]
+    async fn sampling_trace_records_only_the_accepted_grammar_attempt() -> anyhow::Result<()> {
+        struct ByteEnv(toktrie::TokTrie);
+        impl toktrie::TokenizerEnv for ByteEnv {
+            fn tok_trie(&self) -> &toktrie::TokTrie {
+                &self.0
+            }
+            fn tokenize_bytes(&self, bytes: &[u8]) -> Vec<toktrie::TokenId> {
+                self.0.greedy_tokenize(bytes)
+            }
+            fn tokenize_is_canonical(&self) -> bool {
+                false
+            }
+        }
+        let mut tokens: Vec<_> = (0u8..=127).map(|b| vec![b]).collect();
+        tokens.push(b"\xff<eos>".to_vec());
+        let env: toktrie::TokEnv = Arc::new(ByteEnv(toktrie::TokTrie::from(
+            &toktrie::TokRxInfo::new(u32::try_from(tokens.len())?, 128),
+            &tokens,
+        )));
+        let factory = Arc::new(llguidance::ParserFactory::new_simple(&env)?);
+        for pooled in [false, true] {
+            let mut seq = terminal_test_sequence(vec![], None, false);
+            let grammar = llguidance::api::TopLevelGrammar::from_regex("a");
+            seq.recognizer = SequenceRecognizer::Llguidance(Box::new(
+                crate::pipeline::llg::constraint_from_llg_grammar(&factory, grammar)?,
+            ));
+            seq.sampling_trace = Some(crate::sampling_trace::TraceState::new(Default::default()));
+            let mut logits = vec![-10.0f32; tokens.len()];
+            logits[b'b' as usize] = 10.0;
+            logits[b'a' as usize] = 1.0;
+            let selected = sample_sequence(
+                Tensor::from_vec(logits, (1, 1, tokens.len()), &candle_core::Device::Cpu)?,
+                &mut seq,
+                true,
+                Some(&[128]),
+                Some(factory.clone()),
+                256,
+                Arc::new(std::sync::Mutex::new(Isaac64Rng::seed_from_u64(42))),
+                pooled,
+                false,
+                false,
+            )
+            .await?;
+            assert_eq!(selected.token, u32::from(b'a'));
+            let trace = seq.sampling_trace.as_mut().unwrap().take(true).unwrap();
+            assert_eq!(trace.steps.len(), 1);
+            assert_eq!(trace.steps[0].attempt, 1);
+            assert_eq!(trace.steps[0].selected_token_id, selected.token);
+            assert_eq!(trace.steps[0].generated_index, 0);
+            assert_eq!(trace.steps[0].candidates[0].input_logit, Some(1.0));
+        }
+        Ok(())
+    }
 
     fn terminal_test_sequence(
         stop_tokens: Vec<u32>,

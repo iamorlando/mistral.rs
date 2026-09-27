@@ -290,6 +290,33 @@ mod tests {
     }
 
     #[test]
+    fn sampling_trace_request_response_and_stream_schemas() {
+        let value = serde_json::to_value(get_openapi_doc(None)).unwrap();
+        let schemas = &value["components"]["schemas"];
+        for name in ["ChatCompletionRequest", "CompletionRequest"] {
+            assert!(schemas[name]["properties"]["sampling_trace"]
+                .to_string()
+                .contains("SamplingTraceConfig"));
+        }
+        for name in [
+            "ChatCompletionResponseChoice",
+            "ChatCompletionChunkChoice",
+            "CompletionResponseChoice",
+            "CompletionChunkChoice",
+        ] {
+            assert!(schemas[name]["properties"]["sampling_trace"]
+                .to_string()
+                .contains("SamplingTrace"));
+        }
+        assert!(schemas["SamplingTraceStep"]["properties"]
+            .get("selected_token_id")
+            .is_some());
+        assert!(schemas["TraceCandidate"]["properties"]
+            .get("input_logit")
+            .is_some());
+    }
+
+    #[test]
     fn watermark_detector_is_registered_and_documented() {
         use crate::route_registry::{MISTRALRS_API_ROUTES, WATERMARK_DETECT_ROUTE};
 

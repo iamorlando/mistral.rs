@@ -1131,6 +1131,8 @@ pub struct ChatCompletionRequest {
         deserialize_with = "mistralrs_core::WatermarkConfig::deserialize_option"
     )]
     pub watermark: Option<mistralrs_core::WatermarkConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sampling_trace: Option<mistralrs_core::sampling_trace::SamplingTraceConfig>,
     /// The conversation so far, or a single raw prompt string.
     #[schema(
         schema_with = messages_schema,
@@ -1356,6 +1358,7 @@ pub struct ChatCompletionResponseMessage {
 
 #[derive(Debug, ToSchema)]
 pub struct ChatCompletionResponseChoice {
+    pub sampling_trace: Option<mistralrs_core::sampling_trace::SamplingTrace>,
     pub finish_reason: String,
     pub index: usize,
     pub message: ChatCompletionResponseMessage,
@@ -1388,6 +1391,7 @@ pub struct ChatCompletionChunkDelta {
 
 #[derive(Debug, ToSchema)]
 pub struct ChatCompletionChunkChoice {
+    pub sampling_trace: Option<mistralrs_core::sampling_trace::SamplingTrace>,
     pub finish_reason: Option<String>,
     pub index: usize,
     pub delta: ChatCompletionChunkDelta,
@@ -1410,6 +1414,7 @@ pub struct ChatCompletionChunkResponseBody {
 
 #[derive(Debug, ToSchema)]
 pub struct CompletionResponseChoice {
+    pub sampling_trace: Option<mistralrs_core::sampling_trace::SamplingTrace>,
     pub finish_reason: String,
     pub index: usize,
     pub text: String,
@@ -1431,6 +1436,7 @@ pub struct CompletionResponseBody {
 
 #[derive(Debug, ToSchema)]
 pub struct CompletionChunkChoice {
+    pub sampling_trace: Option<mistralrs_core::sampling_trace::SamplingTrace>,
     pub text: String,
     pub index: usize,
     pub logprobs: Option<Value>,
@@ -1458,6 +1464,8 @@ pub struct CompletionRequest {
         deserialize_with = "mistralrs_core::WatermarkConfig::deserialize_option"
     )]
     pub watermark: Option<mistralrs_core::WatermarkConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sampling_trace: Option<mistralrs_core::sampling_trace::SamplingTraceConfig>,
     /// Model ID; "default" targets the only loaded model.
     #[schema(example = "mistral")]
     #[serde(default = "default_model")]
@@ -2123,6 +2131,66 @@ pub struct ResponsesDeltaContent {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn sampling_trace_requests_are_opt_in_and_bounded() {
+        let chat: ChatCompletionRequest =
+            serde_json::from_value(json!({"messages": "hello"})).unwrap();
+        assert!(chat.sampling_trace.is_none());
+        assert!(serde_json::to_value(chat)
+            .unwrap()
+            .get("sampling_trace")
+            .is_none());
+        let chat: ChatCompletionRequest = serde_json::from_value(json!({
+            "messages": "hello", "logprobs": true, "sampling_trace": {}
+        }))
+        .unwrap();
+        assert!(chat
+            .sampling_trace
+            .unwrap()
+            .validate(chat.logprobs, chat.n_choices)
+            .is_ok());
+        let completion: CompletionRequest = serde_json::from_value(json!({
+            "prompt": "hello", "logprobs": 0, "sampling_trace": {"max_layers": 0}
+        }))
+        .unwrap();
+        assert!(completion
+            .sampling_trace
+            .unwrap()
+            .validate(completion.logprobs.is_some(), completion.n_choices)
+            .is_ok());
+        for extension in [
+            json!({"max_steps": 0}),
+            json!({"max_candidates": 129}),
+            json!({"max_layers": 33}),
+        ] {
+            let request: ChatCompletionRequest = serde_json::from_value(json!({
+                "messages": "hello", "logprobs": true, "sampling_trace": extension
+            }))
+            .unwrap();
+            assert!(request
+                .sampling_trace
+                .unwrap()
+                .validate(request.logprobs, request.n_choices)
+                .is_err());
+        }
+        for fields in [
+            json!({"logprobs": false}),
+            json!({"logprobs": true, "n": 2}),
+        ] {
+            let mut request = json!({"messages": "hello", "sampling_trace": {}});
+            request
+                .as_object_mut()
+                .unwrap()
+                .extend(fields.as_object().unwrap().clone());
+            let request: ChatCompletionRequest = serde_json::from_value(request).unwrap();
+            assert!(request
+                .sampling_trace
+                .unwrap()
+                .validate(request.logprobs, request.n_choices)
+                .is_err());
+        }
+    }
 
     #[test]
     fn generation_requests_accept_opt_in_watermark() {

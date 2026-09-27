@@ -762,6 +762,7 @@ pub struct Sequence {
     ignore_eos: bool,
     return_logprobs: bool,
     stream_logprobs: bool,
+    pub(crate) sampling_trace: Option<crate::sampling_trace::TraceState>,
     responder: Sender<Response>,
     response_index: usize,
     creation_time: u64,
@@ -926,6 +927,7 @@ impl Sequence {
             max_len,
             return_logprobs,
             stream_logprobs,
+            sampling_trace: None,
             prompt_tok_per_sec: 0.,
             prompt_timestamp: None,
             group,
@@ -2648,6 +2650,7 @@ mod tests {
 
     fn test_streaming_chunk(index: usize, finish_reason: Option<&str>) -> ChunkChoice {
         ChunkChoice {
+            sampling_trace: None,
             finish_reason: finish_reason.map(str::to_string),
             stop_sequence: None,
             index,
@@ -2658,6 +2661,63 @@ mod tests {
                 reasoning_content: None,
             },
             logprobs: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn sampling_trace_streams_before_terminal_and_omits_unrequested_fields() {
+        for is_chat in [true, false] {
+            let mut seq = make_test_sequence();
+            seq.cache.push(None);
+            let (tx, mut rx) = channel(4);
+            seq.responder = tx;
+            seq.group = Arc::new(Mutex::new(SequenceGroup::new(1, true, is_chat, None)));
+            let trace = crate::sampling_trace::SamplingTrace {
+                steps: vec![crate::sampling_trace::tests::step(0)],
+                ..Default::default()
+            };
+            if is_chat {
+                let mut chunk = test_streaming_chunk(0, None);
+                chunk.delta.content = None;
+                chunk.logprobs = None;
+                chunk.sampling_trace = Some(trace);
+                seq.add_streaming_chunk_choice_to_group(chunk);
+                seq.add_streaming_chunk_choice_to_group(test_streaming_chunk(0, Some("stop")));
+            } else {
+                seq.add_streaming_completion_chunk_choice_to_group(CompletionChunkChoice {
+                    sampling_trace: Some(trace),
+                    text: String::new(),
+                    index: 0,
+                    logprobs: None,
+                    finish_reason: None,
+                });
+                seq.add_streaming_completion_chunk_choice_to_group(CompletionChunkChoice {
+                    sampling_trace: None,
+                    text: "done".into(),
+                    index: 0,
+                    logprobs: None,
+                    finish_reason: Some("stop".into()),
+                });
+            }
+            seq.get_mut_group()
+                .maybe_send_streaming_response(&seq, "test".into(), Some(test_usage()))
+                .await
+                .unwrap();
+            let serialize = |response: Response| match response {
+                Response::Chunk(chunk) => serde_json::to_value(chunk).unwrap(),
+                Response::CompletionChunk(chunk) => serde_json::to_value(chunk).unwrap(),
+                _ => panic!("unexpected response"),
+            };
+            let first = serialize(rx.recv().await.unwrap());
+            assert_eq!(
+                first["choices"][0]["sampling_trace"]["steps"][0]["generated_index"],
+                0
+            );
+            assert!(first["choices"][0]["finish_reason"].is_null());
+            let last = serialize(rx.recv().await.unwrap());
+            assert_eq!(last["choices"][0]["finish_reason"], "stop");
+            assert!(last["choices"][0].get("sampling_trace").is_none());
+            assert!(rx.try_recv().is_err());
         }
     }
 

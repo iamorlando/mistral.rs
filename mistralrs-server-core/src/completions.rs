@@ -222,6 +222,14 @@ pub fn parse_request(
         anyhow::bail!("max_tokens must be at least 1.");
     }
 
+    if let Some(trace) = &oairequest.sampling_trace {
+        trace.validate(oairequest.logprobs.is_some(), oairequest.n_choices)?;
+        crate::util::validate_sampling_trace_model(&state, &oairequest.model, false)?;
+        anyhow::ensure!(
+            oairequest.best_of.is_none_or(|n| n == 1),
+            "sampling_trace requires best_of=1"
+        );
+    }
     let stop_toks = convert_stop_tokens(oairequest.stop_seqs);
 
     let is_streaming = oairequest.stream.unwrap_or(false);
@@ -244,6 +252,7 @@ pub fn parse_request(
             },
             sampling_params: SamplingParams {
                 watermark: oairequest.watermark,
+                sampling_trace: oairequest.sampling_trace,
                 temperature: oairequest.temperature,
                 top_k: oairequest.top_k,
                 top_p: oairequest.top_p,

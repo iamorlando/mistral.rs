@@ -100,6 +100,7 @@ mod request;
 pub mod resource_plan;
 mod response;
 mod sampler;
+pub mod sampling_trace;
 mod scheduler;
 mod sequence;
 mod special_text;
@@ -320,6 +321,7 @@ impl AddModelConfig {
 
 #[derive(Clone)]
 pub struct MistralRsConfig {
+    pub supports_sampling_trace: bool,
     pub kind: ModelKind,
     pub device: Device,
     pub category: ModelCategory,
@@ -1193,6 +1195,7 @@ impl MistralRs {
             _ => Some(metadata.max_seq_len),
         };
         let generation_defaults = pipeline_guard.generation_defaults();
+        let supports_sampling_trace = pipeline_guard.supports_sampling_trace();
         let encoder_cache_counters = pipeline_guard.encoder_cache_counters();
         let adapter_runtime = pipeline_guard.adapter_runtime();
         drop(pipeline_guard);
@@ -1211,6 +1214,7 @@ impl MistralRs {
         info!("Pipeline output modalities are {:?}", &modalities.output);
 
         let mistralrs_config = MistralRsConfig {
+            supports_sampling_trace,
             kind,
             device,
             category: category.clone(),

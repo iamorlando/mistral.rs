@@ -18,6 +18,9 @@ use tokenizers::Tokenizer;
 use crate::watermark::RequestWatermark;
 use crate::WatermarkConfig;
 
+mod trace;
+pub(crate) use trace::TraceStepContext;
+
 #[cfg(any(feature = "cuda", feature = "metal", test))]
 mod watermark;
 
@@ -87,6 +90,8 @@ pub struct SamplingParams {
         deserialize_with = "WatermarkConfig::deserialize_option"
     )]
     pub watermark: Option<WatermarkConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sampling_trace: Option<crate::sampling_trace::SamplingTraceConfig>,
 }
 
 impl SamplingParams {
@@ -113,6 +118,7 @@ impl SamplingParams {
             n_choices: 1,
             dry_params: None,
             watermark: None,
+            sampling_trace: None,
         }
     }
 
@@ -137,6 +143,7 @@ impl SamplingParams {
             n_choices: 1,
             dry_params: None,
             watermark: None,
+            sampling_trace: None,
         }
     }
 

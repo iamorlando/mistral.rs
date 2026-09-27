@@ -2800,7 +2800,17 @@
             "type": "integer",
             "minimum": 0
           },
-          "logprobs": {}
+          "logprobs": {},
+          "sampling_trace": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SamplingTrace"
+              }
+            ]
+          }
         }
       },
       "ChatCompletionChunkDelta": {
@@ -3133,6 +3143,16 @@
               }
             ]
           },
+          "sampling_trace": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SamplingTraceConfig"
+              }
+            ]
+          },
           "seed": {
             "type": [
               "integer",
@@ -3343,6 +3363,16 @@
           "logprobs": {},
           "message": {
             "$ref": "#/components/schemas/ChatCompletionResponseMessage"
+          },
+          "sampling_trace": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SamplingTrace"
+              }
+            ]
           }
         }
       },
@@ -3394,6 +3424,16 @@
             "minimum": 0
           },
           "logprobs": {},
+          "sampling_trace": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SamplingTrace"
+              }
+            ]
+          },
           "text": {
             "type": "string"
           }
@@ -3611,6 +3651,16 @@
             "description": "Multiplicative repetition penalty; 1.0 disables it.",
             "example": null
           },
+          "sampling_trace": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SamplingTraceConfig"
+              }
+            ]
+          },
           "seed": {
             "type": [
               "integer",
@@ -3785,6 +3835,16 @@
             "minimum": 0
           },
           "logprobs": {},
+          "sampling_trace": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SamplingTrace"
+              }
+            ]
+          },
           "text": {
             "type": "string"
           }
@@ -8166,6 +8226,120 @@
           }
         }
       },
+      "SamplingTrace": {
+        "type": "object",
+        "required": [
+          "steps",
+          "truncated"
+        ],
+        "properties": {
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SamplingTraceStep"
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "truncation_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SamplingTraceConfig": {
+        "type": "object",
+        "properties": {
+          "max_candidates": {
+            "type": "integer",
+            "default": 32,
+            "minimum": 0
+          },
+          "max_layers": {
+            "type": "integer",
+            "default": 8,
+            "minimum": 0
+          },
+          "max_steps": {
+            "type": "integer",
+            "default": 32,
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "SamplingTraceStep": {
+        "type": "object",
+        "required": [
+          "generated_index",
+          "context_length",
+          "attempt",
+          "selected_token_id",
+          "selection_rule",
+          "candidate_count",
+          "candidates_truncated",
+          "candidates",
+          "layers",
+          "layers_truncated"
+        ],
+        "properties": {
+          "attempt": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "candidate_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TraceCandidate"
+            }
+          },
+          "candidates_truncated": {
+            "type": "boolean"
+          },
+          "context_length": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "generated_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "layers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TraceLayer"
+            }
+          },
+          "layers_truncated": {
+            "type": "boolean"
+          },
+          "selected_token_id": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "selection_rule": {
+            "type": "string"
+          },
+          "watermark": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TraceWatermark"
+              }
+            ]
+          }
+        }
+      },
       "SearchContextSize": {
         "type": "string",
         "enum": [
@@ -8592,6 +8766,253 @@
         "enum": [
           "function"
         ]
+      },
+      "TraceCandidate": {
+        "type": "object",
+        "required": [
+          "token_id",
+          "reporting_probability",
+          "pre_watermark_probability"
+        ],
+        "properties": {
+          "cdf_lower": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "cdf_upper": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "input_logit": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float"
+          },
+          "inverse_rank": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "membership": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TraceMembership"
+              }
+            ]
+          },
+          "post_watermark_log_probability": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "post_watermark_probability": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "pre_watermark_probability": {
+            "type": "number",
+            "format": "double"
+          },
+          "processed_logit": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float"
+          },
+          "reporting_probability": {
+            "type": "number",
+            "format": "float"
+          },
+          "selection_score": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "selection_score_status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "token_id": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "TraceInverse": {
+        "type": "object",
+        "required": [
+          "uniform",
+          "threshold",
+          "total_weight"
+        ],
+        "properties": {
+          "threshold": {
+            "type": "number",
+            "format": "double"
+          },
+          "total_weight": {
+            "type": "number",
+            "format": "double"
+          },
+          "uniform": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "TraceLayer": {
+        "type": "object",
+        "description": "Layer arrays follow the step's candidate order and retain full-support normalization.",
+        "required": [
+          "index",
+          "green_mass",
+          "input_normalizer",
+          "g_values",
+          "input_probabilities",
+          "probabilities"
+        ],
+        "properties": {
+          "g_values": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          "green_mass": {
+            "type": "number",
+            "format": "double"
+          },
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "input_normalizer": {
+            "type": "number",
+            "format": "double"
+          },
+          "input_probabilities": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          "probabilities": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        }
+      },
+      "TraceMembership": {
+        "type": "object",
+        "required": [
+          "kind",
+          "favored"
+        ],
+        "properties": {
+          "favored": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string"
+          }
+        }
+      },
+      "TraceWatermark": {
+        "type": "object",
+        "required": [
+          "scheme",
+          "status"
+        ],
+        "properties": {
+          "bias_delta": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "inverse": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TraceInverse"
+              }
+            ]
+          },
+          "key_position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "payload_position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "payload_symbol": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "scheme": {
+            "type": "string"
+          },
+          "score_kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          }
+        }
       },
       "TruncationStrategy": {
         "type": "string",

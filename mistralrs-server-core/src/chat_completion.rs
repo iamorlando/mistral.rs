@@ -567,6 +567,9 @@ pub async fn parse_request(
     oairequest: ChatCompletionRequest,
     ctx: ChatCompletionParseContext,
 ) -> Result<(Request, bool)> {
+    if let Some(trace) = &oairequest.sampling_trace {
+        trace.validate(oairequest.logprobs, oairequest.n_choices)?;
+    }
     let ChatCompletionParseContext {
         state,
         tx,
@@ -576,6 +579,13 @@ pub async fn parse_request(
         tool_surface,
         skill_store,
     } = ctx;
+    if oairequest.sampling_trace.is_some() {
+        crate::util::validate_sampling_trace_model(&state, &oairequest.model, true)?;
+        anyhow::ensure!(
+            oairequest.max_tool_rounds.is_none() && tool_dispatch_url.is_none(),
+            "sampling_trace does not support automatic tool execution or input files"
+        );
+    }
     let repr = serde_json::to_string(&oairequest)
         .context("Failed to serialize chat completion request for logging")?;
     MistralRs::maybe_log_request(state.clone(), repr);
@@ -1013,6 +1023,15 @@ pub async fn parse_request(
         }
     };
 
+    if oairequest.sampling_trace.is_some() {
+        anyhow::ensure!(
+            normalized_tools.web_search_options.is_none()
+                && !normalized_tools.enable_code_execution
+                && !normalized_tools.enable_shell
+                && input_files.is_empty(),
+            "sampling_trace does not support automatic tool execution or input files"
+        );
+    }
     let dry_params = get_dry_sampling_params(
         oairequest.dry_multiplier,
         oairequest.dry_sequence_breakers,
@@ -1052,6 +1071,7 @@ pub async fn parse_request(
             messages,
             sampling_params: SamplingParams {
                 watermark: oairequest.watermark,
+                sampling_trace: oairequest.sampling_trace,
                 temperature: oairequest.temperature,
                 top_k: oairequest.top_k,
                 top_p: oairequest.top_p,

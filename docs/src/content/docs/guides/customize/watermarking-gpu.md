@@ -50,6 +50,23 @@ Position-keyed schemes use the configured start position plus the generated-toke
 count, modulo their period. Replaying or discarding a branch does not advance
 shared watermark state.
 
+## Sampling traces
+
+The HTTP `sampling_trace` extension requires the existing logprob path, which
+performs sampling on the host even when model inference uses Metal or CUDA.
+It calls the library's scalar traced methods and adds no device readback beyond
+that path's existing logits transfer. Requests without traces keep the compact
+GPU path and its single readback unchanged. See the
+[sampling trace contract](/guides/customize/watermarking/#inspect-sampling-with-and-without-watermarking).
+
+The library also provides device-resident dense/indexed trace tensors, but this
+HTTP integration does not export them. The current compact sampler chooses on
+the host after its readback, so gathering trace rows on the GPU after selection
+would require another transfer. A future GPU trace export must include bounded
+metadata in the existing packed readback. Device-history traces cannot identify
+whether an inactive step was warmup or a repeated context; that reason must stay
+unspecified rather than be inferred.
+
 ## Host boundary: fused CUDA samplers
 
 The current CUDA batch/resident and sparse speculative paths combine filtering,
