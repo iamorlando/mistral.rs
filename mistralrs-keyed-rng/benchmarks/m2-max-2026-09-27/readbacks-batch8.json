@@ -1,0 +1,12 @@
+{
+  "batch": 8,
+  "steps": 4,
+  "readbacks": {
+    "cpu_legacy": 0,
+    "cpu_keyed": 0,
+    "readback_cpu_legacy": 4,
+    "readback_cpu_keyed": 4,
+    "metal_compact": 4,
+    "metal_queued": 0
+  }
+}

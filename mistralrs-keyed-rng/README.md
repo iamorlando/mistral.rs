@@ -104,3 +104,7 @@ candidates, and queued device history/penalty/EOS updates.
 
 These checks use synthetic logits and device feedback. No complete model generation
 or end-to-end throughput benchmark was run. CUDA was not built or run on this Mac.
+
+The [sampling benchmark and runtime readback audit](benchmarks/README.md) compare
+the actual CPU and Metal samplers, including completed GPU execution. Local
+measurements are stored beside that harness documentation.

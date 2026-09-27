@@ -20,6 +20,8 @@ static DRY_SEQUENCE_BREAKERS: LazyLock<Vec<String>> =
 const SUPPRESS_TOKEN_LOGIT_BIAS: f32 = -1.0e9;
 
 mod keyed;
+#[cfg(all(test, feature = "metal"))]
+mod keyed_bench;
 pub(crate) use keyed::{keyed_sampling_enabled, KeyedSampleContext};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
