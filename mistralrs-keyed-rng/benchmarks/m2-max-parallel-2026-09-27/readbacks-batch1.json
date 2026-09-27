@@ -1,0 +1,38 @@
+{
+  "batch": 1,
+  "steps": 4,
+  "readbacks": {
+    "cpu_legacy": 0,
+    "cpu_keyed": 0,
+    "readback_cpu_legacy": 4,
+    "readback_cpu_keyed": 4,
+    "metal_compact": 4,
+    "metal_queued": 0
+  },
+  "kinds": {
+    "cpu_legacy": {
+      "candle_copy": 0,
+      "shared_records": 0
+    },
+    "cpu_keyed": {
+      "candle_copy": 0,
+      "shared_records": 0
+    },
+    "readback_cpu_legacy": {
+      "candle_copy": 4,
+      "shared_records": 0
+    },
+    "readback_cpu_keyed": {
+      "candle_copy": 4,
+      "shared_records": 0
+    },
+    "metal_compact": {
+      "candle_copy": 0,
+      "shared_records": 4
+    },
+    "metal_queued": {
+      "candle_copy": 0,
+      "shared_records": 0
+    }
+  }
+}

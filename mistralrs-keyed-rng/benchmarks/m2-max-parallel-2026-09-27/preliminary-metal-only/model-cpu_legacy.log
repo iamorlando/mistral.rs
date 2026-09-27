@@ -1,0 +1,60 @@
+2026-09-27T22:28:35.091232Z  INFO mistralrs::commands::bench: Loading model for benchmarking...
+2026-09-27T22:28:35.092919Z  INFO mistralrs_quant::utils::log: Model has 30 repeating layers.
+2026-09-27T22:28:35.093267Z  INFO mistralrs_quant::utils::log: Loading model according to the following repeating layer mappings:
+2026-09-27T22:28:35.093715Z  INFO mistralrs_quant::utils::log: Layers 0-29: cpu (64 GB)
+2026-09-27T22:28:35.093957Z  INFO mistralrs_quant::utils::log: DType selected is F32.
+2026-09-27T22:28:35.096086Z  INFO mistralrs_core::pipeline::normal: Loading model weights.
+2026-09-27T22:28:36.124671Z  INFO mistralrs_server_core::mistralrs_for_server_builder: Model loaded.
+2026-09-27T22:28:36.125436Z  INFO mistralrs_core: mistral.rs version: 0.9.4
+2026-09-27T22:28:36.125860Z  INFO mistralrs_core: git revision: 2c6c15b2d5582640447842a910eadfee1ec9b856
+2026-09-27T22:28:36.126912Z  INFO mistralrs_core: Pipeline input modalities are [📝 Text]
+2026-09-27T22:28:36.127209Z  INFO mistralrs_core: Pipeline output modalities are [📝 Text]
+2026-09-27T22:28:36.137335Z  INFO mistralrs_core::kv_cache: Using f16 KV cache on CPU (set MISTRALRS_CPU_KV_F32=1 for f32).
+2026-09-27T22:28:36.241751Z  INFO mistralrs::commands::bench: Model loaded.
+2026-09-27T22:28:36.241795Z  INFO mistralrs::commands::bench: Running 2 warmup iteration(s) per benchmark case...
+2026-09-27T22:28:41.131247Z  INFO mistralrs_core::engine::logger: Throughput (T/s) 40.00 (prefill 25.80, decode 14.20), Prefix cache hitrate 0.00%, 1 running, 0 waiting
+2026-09-27T22:28:46.133211Z  INFO mistralrs_core::engine::logger: Throughput (T/s) 40.80 (prefill 25.80, decode 15.00), Prefix cache hitrate 0.00%, 1 running, 0 waiting
+2026-09-27T22:28:51.137856Z  INFO mistralrs_core::engine::logger: Throughput (T/s) 16.60 (prefill 0.00, decode 16.60), Prefix cache hitrate 0.00%, 1 running, 0 waiting
+2026-09-27T22:28:56.141920Z  INFO mistralrs_core::engine::logger: Throughput (T/s) 113.60 (prefill 102.60, decode 11.00), Prefix cache hitrate 0.00%, 1 running, 0 waiting
+2026-09-27T22:29:01.143738Z  INFO mistralrs_core::engine::logger: Throughput (T/s) 16.60 (prefill 0.00, decode 16.60), Prefix cache hitrate 0.00%, 1 running, 0 waiting
+2026-09-27T22:29:06.146375Z  INFO mistralrs_core::engine::logger: Throughput (T/s) 113.40 (prefill 102.60, decode 10.80), Prefix cache hitrate 0.00%, 1 running, 0 waiting
+2026-09-27T22:29:11.150109Z  INFO mistralrs_core::engine::logger: Throughput (T/s) 16.60 (prefill 0.00, decode 16.60), Prefix cache hitrate 0.00%, 1 running, 0 waiting
+2026-09-27T22:29:11.379699Z  INFO mistralrs::commands::bench: Warmup complete.
+2026-09-27T22:29:11.379761Z  INFO mistralrs::commands::bench: Running 5 iteration(s) with prompt lengths [0], 128 generation tokens, decode depths [128, 512]...
+2026-09-27T22:29:11.379771Z  INFO mistralrs::commands::bench: Iteration 1/5...
+2026-09-27T22:29:16.153767Z  INFO mistralrs_core::engine::logger: Throughput (T/s) 39.80 (prefill 25.80, decode 14.00), Prefix cache hitrate 0.00%, 1 running, 0 waiting
+2026-09-27T22:29:21.158614Z  INFO mistralrs_core::engine::logger: Throughput (T/s) 11.40 (prefill 0.00, decode 11.40), Prefix cache hitrate 0.00%, 1 running, 0 waiting
+2026-09-27T22:29:26.163040Z  INFO mistralrs_core::engine::logger: Throughput (T/s) 118.80 (prefill 102.60, decode 16.20), Prefix cache hitrate 0.00%, 1 running, 0 waiting
+2026-09-27T22:29:28.939050Z  INFO mistralrs::commands::bench: Iteration 2/5...
+2026-09-27T22:29:31.167701Z  INFO mistralrs_core::engine::logger: Throughput (T/s) 40.60 (prefill 25.80, decode 14.80), Prefix cache hitrate 0.00%, 1 running, 0 waiting
+2026-09-27T22:29:36.170436Z  INFO mistralrs_core::engine::logger: Throughput (T/s) 16.60 (prefill 0.00, decode 16.60), Prefix cache hitrate 0.00%, 1 running, 0 waiting
+2026-09-27T22:29:41.172555Z  INFO mistralrs_core::engine::logger: Throughput (T/s) 113.60 (prefill 102.60, decode 11.00), Prefix cache hitrate 0.00%, 1 running, 0 waiting
+2026-09-27T22:29:46.177728Z  INFO mistralrs_core::engine::logger: Throughput (T/s) 16.40 (prefill 0.00, decode 16.40), Prefix cache hitrate 0.00%, 1 running, 0 waiting
+2026-09-27T22:29:46.512141Z  INFO mistralrs::commands::bench: Iteration 3/5...
+2026-09-27T22:29:51.181163Z  INFO mistralrs_core::engine::logger: Throughput (T/s) 40.80 (prefill 25.80, decode 15.00), Prefix cache hitrate 0.00%, 1 running, 0 waiting
+2026-09-27T22:29:56.186351Z  INFO mistralrs_core::engine::logger: Throughput (T/s) 11.60 (prefill 0.00, decode 11.60), Prefix cache hitrate 0.00%, 1 running, 0 waiting
+2026-09-27T22:30:01.188034Z  INFO mistralrs_core::engine::logger: Throughput (T/s) 118.60 (prefill 102.60, decode 16.00), Prefix cache hitrate 0.00%, 1 running, 0 waiting
+2026-09-27T22:30:04.029538Z  INFO mistralrs::commands::bench: Iteration 4/5...
+2026-09-27T22:30:06.193205Z  INFO mistralrs_core::engine::logger: Throughput (T/s) 40.60 (prefill 25.80, decode 14.80), Prefix cache hitrate 0.00%, 1 running, 0 waiting
+2026-09-27T22:30:11.193624Z  INFO mistralrs_core::engine::logger: Throughput (T/s) 16.60 (prefill 0.00, decode 16.60), Prefix cache hitrate 0.00%, 1 running, 0 waiting
+2026-09-27T22:30:16.195247Z  INFO mistralrs_core::engine::logger: Throughput (T/s) 113.40 (prefill 102.60, decode 10.80), Prefix cache hitrate 0.00%, 1 running, 0 waiting
+2026-09-27T22:30:21.200343Z  INFO mistralrs_core::engine::logger: Throughput (T/s) 16.40 (prefill 0.00, decode 16.40), Prefix cache hitrate 0.00%, 1 running, 0 waiting
+2026-09-27T22:30:21.632838Z  INFO mistralrs::commands::bench: Iteration 5/5...
+2026-09-27T22:30:26.202114Z  INFO mistralrs_core::engine::logger: Throughput (T/s) 40.40 (prefill 25.80, decode 14.60), Prefix cache hitrate 0.00%, 1 running, 0 waiting
+2026-09-27T22:30:31.212234Z  INFO mistralrs_core::engine::logger: Throughput (T/s) 12.40 (prefill 0.00, decode 12.40), Prefix cache hitrate 0.00%, 1 running, 0 waiting
+2026-09-27T22:30:36.219263Z  INFO mistralrs_core::engine::logger: Throughput (T/s) 118.00 (prefill 102.60, decode 15.40), Prefix cache hitrate 0.00%, 1 running, 0 waiting
+
+Benchmark Results
+=================
+
+Model: /Users/orlando/.cache/mistralrs-benchmarks/SmolLM2-135M-Instruct/12fd25f77366fa6b3b4b768ec3050bf629380bac
+Adapter: base
+Iterations: 5
+
+┌────────────────────────────┬────────────┬───────────────┐
+│ Test                       ┆ T/s        ┆ Latency       │
+╞════════════════════════════╪════════════╪═══════════════╡
+│ Decode (128 tokens @ d128) ┆ 16.5 ± 0.1 ┆ 60.51 ms TPOT │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Decode (128 tokens @ d512) ┆ 16.5 ± 0.1 ┆ 60.63 ms TPOT │
+└────────────────────────────┴────────────┴───────────────┘

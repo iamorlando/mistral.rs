@@ -1,0 +1,286 @@
+(lldb) command source -s 0 '/var/folders/hl/3trfqmrn3sjbjb5dwxsvnw800000gn/T/keyed-readback-audit-yfe6zn7a/audit.lldb'
+Executing commands in '/var/folders/hl/3trfqmrn3sjbjb5dwxsvnw800000gn/T/keyed-readback-audit-yfe6zn7a/audit.lldb'.
+(lldb) target create "/Users/orlando/.cargo-target/debug/deps/mistralrs_core-1ac57830f05ebeab"
+Current executable set to '/Users/orlando/.cargo-target/debug/deps/mistralrs_core-1ac57830f05ebeab' (arm64).
+(lldb) settings set target.env-vars KEYED_BENCH_AUDIT=1 KEYED_BENCH_QUICK=1 KEYED_BENCH_REPEATS=1 KEYED_BENCH_STEPS=4 KEYED_BENCH_BATCH=1
+(lldb) breakpoint set --file "/Users/orlando/.cargo/git/checkouts/candle-5b4d092929d18d36/66a8cf1/candle-core/src/metal_backend/mod.rs" --line 2004
+Breakpoint 1: 10 locations.
+(lldb) breakpoint command add 1
+(lldb) breakpoint set --file "/private/tmp/mistral-rngs/mistralrs-keyed-rng/src/metal.rs" --line 92
+Breakpoint 2: where = mistralrs_core-1ac57830f05ebeab`mistralrs_keyed_rng::metal::readback_boundary::h13e7ad7b53da4575 + 20 at metal.rs:92:12, address = 0x000000010169b8a4
+(lldb) breakpoint command add 2
+(lldb) run benchmark_keyed_sampling --ignored --nocapture --test-threads=1
+
+running 1 test
+test sampler::keyed_bench::benchmark_keyed_sampling ... vocab,batch,filter,mode,repeat,steps,us_per_batch_step
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+AUDIT_BEGIN mode=cpu_legacy steps=4 batch=1
+AUDIT_END mode=cpu_legacy
+32768,1,topk40_p90,cpu_legacy,0,4,279.729
+AUDIT_BEGIN mode=cpu_keyed steps=4 batch=1
+AUDIT_END mode=cpu_keyed
+32768,1,topk40_p90,cpu_keyed,0,4,311.938
+AUDIT_BEGIN mode=readback_cpu_legacy steps=4 batch=1
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+AUDIT_END mode=readback_cpu_legacy
+32768,1,topk40_p90,readback_cpu_legacy,0,4,7381.614
+AUDIT_BEGIN mode=readback_cpu_keyed steps=4 batch=1
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+AUDIT_END mode=readback_cpu_keyed
+32768,1,topk40_p90,readback_cpu_keyed,0,4,7716.844
+AUDIT_BEGIN mode=metal_compact steps=4 batch=1
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+AUDIT_END mode=metal_compact
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+32768,1,topk40_p90,metal_compact,0,4,7746.625
+AUDIT_BEGIN mode=metal_queued steps=4 batch=1
+AUDIT_END mode=metal_queued
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("CANDLE_METAL_READBACK", flush=True)
+CANDLE_METAL_READBACK
+(lldb)  continue
+Process 35507 resuming
+Command #2 'continue' continued the target.
+32768,1,topk40_p90,metal_queued,0,4,546.708
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=1 filter=topk40_p90 repeat=0 differing=0 total=4
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1425 filtered out; finished in 0.62s
+
+Process 35507 launched: '/Users/orlando/.cargo-target/debug/deps/mistralrs_core-1ac57830f05ebeab' (arm64)
+Process 35507 exited with status = 0 (0x00000000)
+(lldb) breakpoint list
+Current breakpoints:
+1: file = '/Users/orlando/.cargo/git/checkouts/candle-5b4d092929d18d36/66a8cf1/candle-core/src/metal_backend/mod.rs', line = 2004, exact_match = 0, locations = 10, resolved = 10, hit count = 32
+    Breakpoint commands:
+      script print("CANDLE_METAL_READBACK", flush=True)
+      continue
+
+  1.1: where = mistralrs_core-1ac57830f05ebeab`candle_core::metal_backend::MetalStorage::to_cpu::h31f480b904f3661b + 36 at mod.rs:2004:20, address = 0x0000000102696c3c, resolved, hit count = 24
+  1.2: where = mistralrs_core-1ac57830f05ebeab`_$LT$candle_core..metal_backend..MetalStorage$u20$as$u20$candle_core..backend..BackendStorage$GT$::to_cpu_storage::h5e1e080300700a7f + 144 [inlined] candle_core::metal_backend::MetalStorage::to_cpu::hc7a0fd3be113802f at mod.rs:2004:20, address = 0x00000001026a9260, resolved, hit count = 0
+  1.3: where = mistralrs_core-1ac57830f05ebeab`_$LT$candle_core..metal_backend..MetalStorage$u20$as$u20$candle_core..backend..BackendStorage$GT$::to_cpu_storage::h5e1e080300700a7f + 584 [inlined] candle_core::metal_backend::MetalStorage::to_cpu::h1203f16b051066c2 at mod.rs:2004:20, address = 0x00000001026a9418, resolved, hit count = 0
+  1.4: where = mistralrs_core-1ac57830f05ebeab`_$LT$candle_core..metal_backend..MetalStorage$u20$as$u20$candle_core..backend..BackendStorage$GT$::to_cpu_storage::h5e1e080300700a7f + 976 [inlined] candle_core::metal_backend::MetalStorage::to_cpu::h9e352aeb99d8ccfa at mod.rs:2004:20, address = 0x00000001026a95a0, resolved, hit count = 0
+  1.5: where = mistralrs_core-1ac57830f05ebeab`_$LT$candle_core..metal_backend..MetalStorage$u20$as$u20$candle_core..backend..BackendStorage$GT$::to_cpu_storage::h5e1e080300700a7f + 1396 [inlined] candle_core::metal_backend::MetalStorage::to_cpu::hb273b8e3a0c72992 at mod.rs:2004:20, address = 0x00000001026a9744, resolved, hit count = 0
+  1.6: where = mistralrs_core-1ac57830f05ebeab`_$LT$candle_core..metal_backend..MetalStorage$u20$as$u20$candle_core..backend..BackendStorage$GT$::to_cpu_storage::h5e1e080300700a7f + 1908 [inlined] candle_core::metal_backend::MetalStorage::to_cpu::h39d018ff17b1ecea at mod.rs:2004:20, address = 0x00000001026a9944, resolved, hit count = 0
+  1.7: where = mistralrs_core-1ac57830f05ebeab`_$LT$candle_core..metal_backend..MetalStorage$u20$as$u20$candle_core..backend..BackendStorage$GT$::to_cpu_storage::h5e1e080300700a7f + 2320 [inlined] candle_core::metal_backend::MetalStorage::to_cpu::h9b6d636ac68c93a1 at mod.rs:2004:20, address = 0x00000001026a9ae0, resolved, hit count = 8
+  1.8: where = mistralrs_core-1ac57830f05ebeab`_$LT$candle_core..metal_backend..MetalStorage$u20$as$u20$candle_core..backend..BackendStorage$GT$::to_cpu_storage::h5e1e080300700a7f + 2752 [inlined] candle_core::metal_backend::MetalStorage::to_cpu::h60aa6d19a89f6c24 at mod.rs:2004:20, address = 0x00000001026a9c90, resolved, hit count = 0
+  1.9: where = mistralrs_core-1ac57830f05ebeab`_$LT$candle_core..metal_backend..MetalStorage$u20$as$u20$candle_core..backend..BackendStorage$GT$::to_cpu_storage::h5e1e080300700a7f + 3172 [inlined] candle_core::metal_backend::MetalStorage::to_cpu::h346a3b78c6449f4c at mod.rs:2004:20, address = 0x00000001026a9e34, resolved, hit count = 0
+  1.10: where = mistralrs_core-1ac57830f05ebeab`_$LT$candle_core..metal_backend..MetalStorage$u20$as$u20$candle_core..backend..BackendStorage$GT$::to_cpu_storage::h5e1e080300700a7f + 3592 [inlined] candle_core::metal_backend::MetalStorage::to_cpu::hc55875614e535673 at mod.rs:2004:20, address = 0x00000001026a9fd8, resolved, hit count = 0
+
+2: file = '/private/tmp/mistral-rngs/mistralrs-keyed-rng/src/metal.rs', line = 92, exact_match = 0, locations = 1, resolved = 1, hit count = 12
+    Breakpoint commands:
+      script print("KEYED_SHARED_READBACK", flush=True)
+      continue
+
+  2.1: where = mistralrs_core-1ac57830f05ebeab`mistralrs_keyed_rng::metal::readback_boundary::h13e7ad7b53da4575 + 20 at metal.rs:92:12, address = 0x000000010169b8a4, resolved, hit count = 12
+
+(lldb) quit

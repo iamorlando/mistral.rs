@@ -18,7 +18,8 @@ CSV timings are microseconds per **batch step**, including all rows. Metal is
 synchronized before timing and at the end, so these measure completed work.
 Compilation, initial logits uploads, prompt/history initialization and post-run
 validation are excluded. Selection, allocations, key/event derivation, history
-updates and per-step stop-token uploads are included. Inputs stay fixed while
+updates, batch construction and any stop-list changes are included. Unchanged
+stop lists use cached device tensors. Inputs stay fixed while
 generated positions and histories advance. Queued commits feed subsequent device
 events and history, without a model forward pass.
 
@@ -63,14 +64,44 @@ python3 scripts/audit_keyed_readbacks.py /path/to/mistralrs_core-test-binary /pa
 Add `--batch 8` to verify that compact results still use one readback per batch
 step. A machine-readable JSON summary is saved next to the debugger transcript.
 
-The script sets a source breakpoint inside Candle's actual Metal storage `to_cpu`
+The script sets source breakpoints inside Candle's actual Metal storage `to_cpu`
 implementation, where it allocates a CPU staging buffer, blits the source buffer,
-waits for completion and reads its contents. It automatically continues each
+waits for completion and reads its contents, and inside the keyed sampler's
+`readback_boundary`, before direct reads of shared result buffers. It automatically continues each
 breakpoint and counts hits between explicit begin/end markers around four
 sampling steps. Initialization, warmup and final validation lie outside these
-markers. The full-logits and compact modes are positive controls for the same
-breakpoint. Debugger timings must not be used as performance measurements.
+markers. The full-logits and compact modes are positive controls for the two
+boundaries. Debugger timings must not be used as performance measurements.
 
 This measures tensor readback, not all host/driver activity. A terminal
 `Device::synchronize()` remains necessary for completed-work timing. Metal command
 buffer submission, allocation and driver work can also involve CPU overhead.
+
+The [parallel Metal report](m2-max-parallel-2026-09-27/README.md) includes the full
+sampling matrix, both readback audits, and pinned-model CPU/Metal decode runs.
+The earlier [serial-selector report](m2-max-2026-09-27/README.md) is retained as
+historical evidence of the regression that motivated the parallel implementation.
+
+## Complete model decoding
+
+Use a pinned local model checkpoint and one binary with both optimized backends:
+
+```sh
+cargo build -p mistralrs-cli --features metal,accelerate
+python3 scripts/benchmark_keyed_model.py /path/to/mistralrs /path/to/model --features metal,accelerate --output /tmp/keyed-model
+python3 scripts/audit_keyed_readbacks.py /path/to/mistralrs /path/to/candle/candle-core --model /path/to/model --output /tmp/model-keyed-readbacks.txt
+```
+
+The model benchmark runs the default CPU sampler, default Metal sampler, and keyed
+Metal sampler with identical f32 weights and greedy decoding. It explicitly maps
+all transformer layers to the chosen device, disables paged attention, generates
+128 tokens at context depths 128 and 512, and measures five iterations after two
+warmups. The CLI measures streaming decode throughput after the first token.
+Loading and prefill are excluded from decode TPOT. No global seed is needed for
+greedy sampling; the CPU backend rejects the CLI's global `set_seed` operation.
+
+The `--model` readback audit traces eight generated tokens after warmup in the
+actual inference engine. Add `--legacy` for the default sampler positive control.
+It counts both kinds of host read during the complete request, including model
+execution. It does not interpret command submissions or metadata uploads as
+tensor readbacks.

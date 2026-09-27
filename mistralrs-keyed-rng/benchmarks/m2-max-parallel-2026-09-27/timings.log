@@ -1,0 +1,426 @@
+
+running 1 test
+test sampler::keyed_bench::benchmark_keyed_sampling ... vocab,batch,filter,mode,repeat,steps,us_per_batch_step
+32768,1,greedy,cpu_legacy,0,32,104.694
+32768,1,greedy,cpu_keyed,0,32,106.365
+32768,1,greedy,readback_cpu_legacy,0,32,292.885
+32768,1,greedy,readback_cpu_keyed,0,32,292.684
+32768,1,greedy,metal_compact,0,32,301.948
+32768,1,greedy,metal_queued,0,32,74.549
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=1 filter=greedy repeat=0 differing=0 total=32
+32768,1,greedy,cpu_keyed,1,32,103.693
+32768,1,greedy,readback_cpu_legacy,1,32,280.875
+32768,1,greedy,readback_cpu_keyed,1,32,282.934
+32768,1,greedy,metal_compact,1,32,265.061
+32768,1,greedy,metal_queued,1,32,45.332
+32768,1,greedy,cpu_legacy,1,32,105.016
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=1 filter=greedy repeat=1 differing=0 total=32
+32768,1,greedy,readback_cpu_legacy,2,32,272.095
+32768,1,greedy,readback_cpu_keyed,2,32,291.307
+32768,1,greedy,metal_compact,2,32,251.487
+32768,1,greedy,metal_queued,2,32,37.883
+32768,1,greedy,cpu_legacy,2,32,104.434
+32768,1,greedy,cpu_keyed,2,32,106.174
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=1 filter=greedy repeat=2 differing=0 total=32
+32768,1,greedy,readback_cpu_keyed,3,32,271.840
+32768,1,greedy,metal_compact,3,32,247.301
+32768,1,greedy,metal_queued,3,32,36.383
+32768,1,greedy,cpu_legacy,3,32,104.251
+32768,1,greedy,cpu_keyed,3,32,103.880
+32768,1,greedy,readback_cpu_legacy,3,32,272.087
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=1 filter=greedy repeat=3 differing=0 total=32
+32768,1,greedy,metal_compact,4,32,245.818
+32768,1,greedy,metal_queued,4,32,35.535
+32768,1,greedy,cpu_legacy,4,32,103.421
+32768,1,greedy,cpu_keyed,4,32,104.816
+32768,1,greedy,readback_cpu_legacy,4,32,275.486
+32768,1,greedy,readback_cpu_keyed,4,32,277.667
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=1 filter=greedy repeat=4 differing=0 total=32
+32768,1,categorical,cpu_legacy,0,32,107.961
+32768,1,categorical,cpu_keyed,0,32,157.801
+32768,1,categorical,readback_cpu_legacy,0,32,275.333
+32768,1,categorical,readback_cpu_keyed,0,32,322.156
+32768,1,categorical,metal_compact,0,32,259.702
+32768,1,categorical,metal_queued,0,32,43.273
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=1 filter=categorical repeat=0 differing=1 total=32
+32768,1,categorical,cpu_keyed,1,32,154.421
+32768,1,categorical,readback_cpu_legacy,1,32,278.163
+32768,1,categorical,readback_cpu_keyed,1,32,319.353
+32768,1,categorical,metal_compact,1,32,251.145
+32768,1,categorical,metal_queued,1,32,43.995
+32768,1,categorical,cpu_legacy,1,32,107.617
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=1 filter=categorical repeat=1 differing=1 total=32
+32768,1,categorical,readback_cpu_legacy,2,32,274.130
+32768,1,categorical,readback_cpu_keyed,2,32,318.934
+32768,1,categorical,metal_compact,2,32,255.307
+32768,1,categorical,metal_queued,2,32,43.798
+32768,1,categorical,cpu_legacy,2,32,108.025
+32768,1,categorical,cpu_keyed,2,32,153.306
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=1 filter=categorical repeat=2 differing=1 total=32
+32768,1,categorical,readback_cpu_keyed,3,32,330.671
+32768,1,categorical,metal_compact,3,32,262.983
+32768,1,categorical,metal_queued,3,32,43.788
+32768,1,categorical,cpu_legacy,3,32,108.457
+32768,1,categorical,cpu_keyed,3,32,155.918
+32768,1,categorical,readback_cpu_legacy,3,32,273.915
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=1 filter=categorical repeat=3 differing=1 total=32
+32768,1,categorical,metal_compact,4,32,251.551
+32768,1,categorical,metal_queued,4,32,44.398
+32768,1,categorical,cpu_legacy,4,32,108.449
+32768,1,categorical,cpu_keyed,4,32,157.366
+32768,1,categorical,readback_cpu_legacy,4,32,274.926
+32768,1,categorical,readback_cpu_keyed,4,32,323.701
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=1 filter=categorical repeat=4 differing=1 total=32
+32768,1,topk40_p90,cpu_legacy,0,32,223.626
+32768,1,topk40_p90,cpu_keyed,0,32,247.619
+32768,1,topk40_p90,readback_cpu_legacy,0,32,390.427
+32768,1,topk40_p90,readback_cpu_keyed,0,32,415.155
+32768,1,topk40_p90,metal_compact,0,32,408.456
+32768,1,topk40_p90,metal_queued,0,32,110.251
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=1 filter=topk40_p90 repeat=0 differing=0 total=32
+32768,1,topk40_p90,cpu_keyed,1,32,246.548
+32768,1,topk40_p90,readback_cpu_legacy,1,32,387.694
+32768,1,topk40_p90,readback_cpu_keyed,1,32,422.152
+32768,1,topk40_p90,metal_compact,1,32,378.945
+32768,1,topk40_p90,metal_queued,1,32,110.358
+32768,1,topk40_p90,cpu_legacy,1,32,222.500
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=1 filter=topk40_p90 repeat=1 differing=0 total=32
+32768,1,topk40_p90,readback_cpu_legacy,2,32,385.931
+32768,1,topk40_p90,readback_cpu_keyed,2,32,415.125
+32768,1,topk40_p90,metal_compact,2,32,380.003
+32768,1,topk40_p90,metal_queued,2,32,109.969
+32768,1,topk40_p90,cpu_legacy,2,32,221.493
+32768,1,topk40_p90,cpu_keyed,2,32,248.366
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=1 filter=topk40_p90 repeat=2 differing=0 total=32
+32768,1,topk40_p90,readback_cpu_keyed,3,32,413.829
+32768,1,topk40_p90,metal_compact,3,32,383.180
+32768,1,topk40_p90,metal_queued,3,32,116.142
+32768,1,topk40_p90,cpu_legacy,3,32,222.915
+32768,1,topk40_p90,cpu_keyed,3,32,250.953
+32768,1,topk40_p90,readback_cpu_legacy,3,32,394.759
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=1 filter=topk40_p90 repeat=3 differing=0 total=32
+32768,1,topk40_p90,metal_compact,4,32,379.109
+32768,1,topk40_p90,metal_queued,4,32,109.743
+32768,1,topk40_p90,cpu_legacy,4,32,222.167
+32768,1,topk40_p90,cpu_keyed,4,32,250.642
+32768,1,topk40_p90,readback_cpu_legacy,4,32,399.836
+32768,1,topk40_p90,readback_cpu_keyed,4,32,412.271
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=1 filter=topk40_p90 repeat=4 differing=0 total=32
+32768,8,greedy,cpu_legacy,0,32,197.608
+32768,8,greedy,cpu_keyed,0,32,218.501
+32768,8,greedy,readback_cpu_legacy,0,32,441.918
+32768,8,greedy,readback_cpu_keyed,0,32,440.857
+32768,8,greedy,metal_compact,0,32,439.729
+32768,8,greedy,metal_queued,0,32,97.099
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=8 filter=greedy repeat=0 differing=0 total=256
+32768,8,greedy,cpu_keyed,1,32,190.552
+32768,8,greedy,readback_cpu_legacy,1,32,431.283
+32768,8,greedy,readback_cpu_keyed,1,32,455.974
+32768,8,greedy,metal_compact,1,32,435.346
+32768,8,greedy,metal_queued,1,32,97.543
+32768,8,greedy,cpu_legacy,1,32,201.491
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=8 filter=greedy repeat=1 differing=0 total=256
+32768,8,greedy,readback_cpu_legacy,2,32,434.169
+32768,8,greedy,readback_cpu_keyed,2,32,433.858
+32768,8,greedy,metal_compact,2,32,457.566
+32768,8,greedy,metal_queued,2,32,96.202
+32768,8,greedy,cpu_legacy,2,32,206.039
+32768,8,greedy,cpu_keyed,2,32,221.553
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=8 filter=greedy repeat=2 differing=0 total=256
+32768,8,greedy,readback_cpu_keyed,3,32,440.207
+32768,8,greedy,metal_compact,3,32,461.685
+32768,8,greedy,metal_queued,3,32,98.663
+32768,8,greedy,cpu_legacy,3,32,220.447
+32768,8,greedy,cpu_keyed,3,32,234.874
+32768,8,greedy,readback_cpu_legacy,3,32,437.694
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=8 filter=greedy repeat=3 differing=0 total=256
+32768,8,greedy,metal_compact,4,32,440.741
+32768,8,greedy,metal_queued,4,32,96.052
+32768,8,greedy,cpu_legacy,4,32,192.090
+32768,8,greedy,cpu_keyed,4,32,245.333
+32768,8,greedy,readback_cpu_legacy,4,32,584.159
+32768,8,greedy,readback_cpu_keyed,4,32,480.866
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=8 filter=greedy repeat=4 differing=0 total=256
+32768,8,categorical,cpu_legacy,0,32,237.147
+32768,8,categorical,cpu_keyed,0,32,271.895
+32768,8,categorical,readback_cpu_legacy,0,32,490.439
+32768,8,categorical,readback_cpu_keyed,0,32,536.155
+32768,8,categorical,metal_compact,0,32,460.117
+32768,8,categorical,metal_queued,0,32,102.049
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=8 filter=categorical repeat=0 differing=8 total=256
+32768,8,categorical,cpu_keyed,1,32,273.241
+32768,8,categorical,readback_cpu_legacy,1,32,471.146
+32768,8,categorical,readback_cpu_keyed,1,32,539.935
+32768,8,categorical,metal_compact,1,32,449.125
+32768,8,categorical,metal_queued,1,32,98.945
+32768,8,categorical,cpu_legacy,1,32,207.992
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=8 filter=categorical repeat=1 differing=8 total=256
+32768,8,categorical,readback_cpu_legacy,2,32,481.031
+32768,8,categorical,readback_cpu_keyed,2,32,549.277
+32768,8,categorical,metal_compact,2,32,453.444
+32768,8,categorical,metal_queued,2,32,97.522
+32768,8,categorical,cpu_legacy,2,32,224.134
+32768,8,categorical,cpu_keyed,2,32,284.141
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=8 filter=categorical repeat=2 differing=8 total=256
+32768,8,categorical,readback_cpu_keyed,3,32,526.342
+32768,8,categorical,metal_compact,3,32,485.993
+32768,8,categorical,metal_queued,3,32,101.900
+32768,8,categorical,cpu_legacy,3,32,238.927
+32768,8,categorical,cpu_keyed,3,32,278.850
+32768,8,categorical,readback_cpu_legacy,3,32,479.107
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=8 filter=categorical repeat=3 differing=8 total=256
+32768,8,categorical,metal_compact,4,32,487.905
+32768,8,categorical,metal_queued,4,32,100.840
+32768,8,categorical,cpu_legacy,4,32,239.561
+32768,8,categorical,cpu_keyed,4,32,269.991
+32768,8,categorical,readback_cpu_legacy,4,32,460.783
+32768,8,categorical,readback_cpu_keyed,4,32,549.504
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=8 filter=categorical repeat=4 differing=8 total=256
+32768,8,topk40_p90,cpu_legacy,0,32,375.940
+32768,8,topk40_p90,cpu_keyed,0,32,375.234
+32768,8,topk40_p90,readback_cpu_legacy,0,32,636.348
+32768,8,topk40_p90,readback_cpu_keyed,0,32,654.951
+32768,8,topk40_p90,metal_compact,0,32,782.587
+32768,8,topk40_p90,metal_queued,0,32,304.786
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=8 filter=topk40_p90 repeat=0 differing=0 total=256
+32768,8,topk40_p90,cpu_keyed,1,32,396.034
+32768,8,topk40_p90,readback_cpu_legacy,1,32,615.299
+32768,8,topk40_p90,readback_cpu_keyed,1,32,638.901
+32768,8,topk40_p90,metal_compact,1,32,773.393
+32768,8,topk40_p90,metal_queued,1,32,307.022
+32768,8,topk40_p90,cpu_legacy,1,32,357.908
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=8 filter=topk40_p90 repeat=1 differing=0 total=256
+32768,8,topk40_p90,readback_cpu_legacy,2,32,650.376
+32768,8,topk40_p90,readback_cpu_keyed,2,32,632.312
+32768,8,topk40_p90,metal_compact,2,32,805.634
+32768,8,topk40_p90,metal_queued,2,32,308.448
+32768,8,topk40_p90,cpu_legacy,2,32,370.043
+32768,8,topk40_p90,cpu_keyed,2,32,405.379
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=8 filter=topk40_p90 repeat=2 differing=0 total=256
+32768,8,topk40_p90,readback_cpu_keyed,3,32,654.643
+32768,8,topk40_p90,metal_compact,3,32,777.572
+32768,8,topk40_p90,metal_queued,3,32,310.542
+32768,8,topk40_p90,cpu_legacy,3,32,364.638
+32768,8,topk40_p90,cpu_keyed,3,32,391.307
+32768,8,topk40_p90,readback_cpu_legacy,3,32,626.835
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=8 filter=topk40_p90 repeat=3 differing=0 total=256
+32768,8,topk40_p90,metal_compact,4,32,750.630
+32768,8,topk40_p90,metal_queued,4,32,306.293
+32768,8,topk40_p90,cpu_legacy,4,32,374.729
+32768,8,topk40_p90,cpu_keyed,4,32,405.966
+32768,8,topk40_p90,readback_cpu_legacy,4,32,623.951
+32768,8,topk40_p90,readback_cpu_keyed,4,32,642.328
+KEYED_CPU_METAL_DIFFERENCES vocab=32768 batch=8 filter=topk40_p90 repeat=4 differing=0 total=256
+131072,1,greedy,cpu_legacy,0,32,419.635
+131072,1,greedy,cpu_keyed,0,32,421.040
+131072,1,greedy,readback_cpu_legacy,0,32,646.098
+131072,1,greedy,readback_cpu_keyed,0,32,630.859
+131072,1,greedy,metal_compact,0,32,371.616
+131072,1,greedy,metal_queued,0,32,112.672
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=1 filter=greedy repeat=0 differing=0 total=32
+131072,1,greedy,cpu_keyed,1,32,421.003
+131072,1,greedy,readback_cpu_legacy,1,32,617.656
+131072,1,greedy,readback_cpu_keyed,1,32,626.493
+131072,1,greedy,metal_compact,1,32,320.626
+131072,1,greedy,metal_queued,1,32,76.599
+131072,1,greedy,cpu_legacy,1,32,434.615
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=1 filter=greedy repeat=1 differing=0 total=32
+131072,1,greedy,readback_cpu_legacy,2,32,603.870
+131072,1,greedy,readback_cpu_keyed,2,32,602.667
+131072,1,greedy,metal_compact,2,32,327.819
+131072,1,greedy,metal_queued,2,32,112.949
+131072,1,greedy,cpu_legacy,2,32,428.367
+131072,1,greedy,cpu_keyed,2,32,424.992
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=1 filter=greedy repeat=2 differing=0 total=32
+131072,1,greedy,readback_cpu_keyed,3,32,642.988
+131072,1,greedy,metal_compact,3,32,382.993
+131072,1,greedy,metal_queued,3,32,135.755
+131072,1,greedy,cpu_legacy,3,32,430.357
+131072,1,greedy,cpu_keyed,3,32,428.939
+131072,1,greedy,readback_cpu_legacy,3,32,647.047
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=1 filter=greedy repeat=3 differing=0 total=32
+131072,1,greedy,metal_compact,4,32,328.043
+131072,1,greedy,metal_queued,4,32,84.737
+131072,1,greedy,cpu_legacy,4,32,416.790
+131072,1,greedy,cpu_keyed,4,32,416.629
+131072,1,greedy,readback_cpu_legacy,4,32,632.639
+131072,1,greedy,readback_cpu_keyed,4,32,625.531
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=1 filter=greedy repeat=4 differing=0 total=32
+131072,1,categorical,cpu_legacy,0,32,431.473
+131072,1,categorical,cpu_keyed,0,32,614.348
+131072,1,categorical,readback_cpu_legacy,0,32,725.710
+131072,1,categorical,readback_cpu_keyed,0,32,797.307
+131072,1,categorical,metal_compact,0,32,401.292
+131072,1,categorical,metal_queued,0,32,115.908
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=1 filter=categorical repeat=0 differing=11 total=32
+131072,1,categorical,cpu_keyed,1,32,617.492
+131072,1,categorical,readback_cpu_legacy,1,32,624.663
+131072,1,categorical,readback_cpu_keyed,1,32,828.529
+131072,1,categorical,metal_compact,1,32,358.417
+131072,1,categorical,metal_queued,1,32,125.361
+131072,1,categorical,cpu_legacy,1,32,428.575
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=1 filter=categorical repeat=1 differing=11 total=32
+131072,1,categorical,readback_cpu_legacy,2,32,617.362
+131072,1,categorical,readback_cpu_keyed,2,32,807.264
+131072,1,categorical,metal_compact,2,32,348.913
+131072,1,categorical,metal_queued,2,32,81.987
+131072,1,categorical,cpu_legacy,2,32,429.892
+131072,1,categorical,cpu_keyed,2,32,613.853
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=1 filter=categorical repeat=2 differing=11 total=32
+131072,1,categorical,readback_cpu_keyed,3,32,853.706
+131072,1,categorical,metal_compact,3,32,391.948
+131072,1,categorical,metal_queued,3,32,129.415
+131072,1,categorical,cpu_legacy,3,32,429.406
+131072,1,categorical,cpu_keyed,3,32,609.648
+131072,1,categorical,readback_cpu_legacy,3,32,736.241
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=1 filter=categorical repeat=3 differing=11 total=32
+131072,1,categorical,metal_compact,4,32,311.171
+131072,1,categorical,metal_queued,4,32,80.236
+131072,1,categorical,cpu_legacy,4,32,432.879
+131072,1,categorical,cpu_keyed,4,32,618.505
+131072,1,categorical,readback_cpu_legacy,4,32,682.217
+131072,1,categorical,readback_cpu_keyed,4,32,1030.634
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=1 filter=categorical repeat=4 differing=11 total=32
+131072,1,topk40_p90,cpu_legacy,0,32,892.264
+131072,1,topk40_p90,cpu_keyed,0,32,996.210
+131072,1,topk40_p90,readback_cpu_legacy,0,32,1432.880
+131072,1,topk40_p90,readback_cpu_keyed,0,32,1596.702
+131072,1,topk40_p90,metal_compact,0,32,531.383
+131072,1,topk40_p90,metal_queued,0,32,204.290
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=1 filter=topk40_p90 repeat=0 differing=0 total=32
+131072,1,topk40_p90,cpu_keyed,1,32,985.539
+131072,1,topk40_p90,readback_cpu_legacy,1,32,1470.793
+131072,1,topk40_p90,readback_cpu_keyed,1,32,1602.660
+131072,1,topk40_p90,metal_compact,1,32,523.427
+131072,1,topk40_p90,metal_queued,1,32,202.943
+131072,1,topk40_p90,cpu_legacy,1,32,889.612
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=1 filter=topk40_p90 repeat=1 differing=0 total=32
+131072,1,topk40_p90,readback_cpu_legacy,2,32,1475.770
+131072,1,topk40_p90,readback_cpu_keyed,2,32,1597.665
+131072,1,topk40_p90,metal_compact,2,32,522.585
+131072,1,topk40_p90,metal_queued,2,32,202.297
+131072,1,topk40_p90,cpu_legacy,2,32,893.134
+131072,1,topk40_p90,cpu_keyed,2,32,1000.294
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=1 filter=topk40_p90 repeat=2 differing=0 total=32
+131072,1,topk40_p90,readback_cpu_keyed,3,32,1538.029
+131072,1,topk40_p90,metal_compact,3,32,542.527
+131072,1,topk40_p90,metal_queued,3,32,204.767
+131072,1,topk40_p90,cpu_legacy,3,32,906.626
+131072,1,topk40_p90,cpu_keyed,3,32,988.479
+131072,1,topk40_p90,readback_cpu_legacy,3,32,1453.542
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=1 filter=topk40_p90 repeat=3 differing=0 total=32
+131072,1,topk40_p90,metal_compact,4,32,523.207
+131072,1,topk40_p90,metal_queued,4,32,203.854
+131072,1,topk40_p90,cpu_legacy,4,32,891.018
+131072,1,topk40_p90,cpu_keyed,4,32,1004.964
+131072,1,topk40_p90,readback_cpu_legacy,4,32,1433.632
+131072,1,topk40_p90,readback_cpu_keyed,4,32,1596.508
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=1 filter=topk40_p90 repeat=4 differing=0 total=32
+131072,8,greedy,cpu_legacy,0,32,561.099
+131072,8,greedy,cpu_keyed,0,32,544.236
+131072,8,greedy,readback_cpu_legacy,0,32,1353.608
+131072,8,greedy,readback_cpu_keyed,0,32,1437.767
+131072,8,greedy,metal_compact,0,32,662.893
+131072,8,greedy,metal_queued,0,32,167.548
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=8 filter=greedy repeat=0 differing=0 total=256
+131072,8,greedy,cpu_keyed,1,32,554.385
+131072,8,greedy,readback_cpu_legacy,1,32,1360.665
+131072,8,greedy,readback_cpu_keyed,1,32,1352.996
+131072,8,greedy,metal_compact,1,32,670.358
+131072,8,greedy,metal_queued,1,32,166.345
+131072,8,greedy,cpu_legacy,1,32,574.962
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=8 filter=greedy repeat=1 differing=0 total=256
+131072,8,greedy,readback_cpu_legacy,2,32,1416.310
+131072,8,greedy,readback_cpu_keyed,2,32,1327.723
+131072,8,greedy,metal_compact,2,32,658.503
+131072,8,greedy,metal_queued,2,32,167.934
+131072,8,greedy,cpu_legacy,2,32,553.663
+131072,8,greedy,cpu_keyed,2,32,533.553
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=8 filter=greedy repeat=2 differing=0 total=256
+131072,8,greedy,readback_cpu_keyed,3,32,1339.712
+131072,8,greedy,metal_compact,3,32,700.562
+131072,8,greedy,metal_queued,3,32,169.520
+131072,8,greedy,cpu_legacy,3,32,554.251
+131072,8,greedy,cpu_keyed,3,32,551.720
+131072,8,greedy,readback_cpu_legacy,3,32,1255.421
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=8 filter=greedy repeat=3 differing=0 total=256
+131072,8,greedy,metal_compact,4,32,697.517
+131072,8,greedy,metal_queued,4,32,170.048
+131072,8,greedy,cpu_legacy,4,32,539.643
+131072,8,greedy,cpu_keyed,4,32,540.901
+131072,8,greedy,readback_cpu_legacy,4,32,1317.431
+131072,8,greedy,readback_cpu_keyed,4,32,1368.777
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=8 filter=greedy repeat=4 differing=0 total=256
+131072,8,categorical,cpu_legacy,0,32,596.861
+131072,8,categorical,cpu_keyed,0,32,807.118
+131072,8,categorical,readback_cpu_legacy,0,32,1401.729
+131072,8,categorical,readback_cpu_keyed,0,32,1835.984
+131072,8,categorical,metal_compact,0,32,720.966
+131072,8,categorical,metal_queued,0,32,173.388
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=8 filter=categorical repeat=0 differing=72 total=256
+131072,8,categorical,cpu_keyed,1,32,828.111
+131072,8,categorical,readback_cpu_legacy,1,32,1367.820
+131072,8,categorical,readback_cpu_keyed,1,32,1651.078
+131072,8,categorical,metal_compact,1,32,699.796
+131072,8,categorical,metal_queued,1,32,176.204
+131072,8,categorical,cpu_legacy,1,32,591.471
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=8 filter=categorical repeat=1 differing=72 total=256
+131072,8,categorical,readback_cpu_legacy,2,32,1495.527
+131072,8,categorical,readback_cpu_keyed,2,32,1744.238
+131072,8,categorical,metal_compact,2,32,686.025
+131072,8,categorical,metal_queued,2,32,176.915
+131072,8,categorical,cpu_legacy,2,32,587.486
+131072,8,categorical,cpu_keyed,2,32,845.671
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=8 filter=categorical repeat=2 differing=72 total=256
+131072,8,categorical,readback_cpu_keyed,3,32,1551.422
+131072,8,categorical,metal_compact,3,32,713.970
+131072,8,categorical,metal_queued,3,32,177.421
+131072,8,categorical,cpu_legacy,3,32,587.026
+131072,8,categorical,cpu_keyed,3,32,814.626
+131072,8,categorical,readback_cpu_legacy,3,32,1368.348
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=8 filter=categorical repeat=3 differing=72 total=256
+131072,8,categorical,metal_compact,4,32,702.055
+131072,8,categorical,metal_queued,4,32,178.688
+131072,8,categorical,cpu_legacy,4,32,577.978
+131072,8,categorical,cpu_keyed,4,32,789.952
+131072,8,categorical,readback_cpu_legacy,4,32,1386.874
+131072,8,categorical,readback_cpu_keyed,4,32,1639.260
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=8 filter=categorical repeat=4 differing=72 total=256
+131072,8,topk40_p90,cpu_legacy,0,32,1188.112
+131072,8,topk40_p90,cpu_keyed,0,32,1279.490
+131072,8,topk40_p90,readback_cpu_legacy,0,32,1893.391
+131072,8,topk40_p90,readback_cpu_keyed,0,32,2089.938
+131072,8,topk40_p90,metal_compact,0,32,1635.241
+131072,8,topk40_p90,metal_queued,0,32,857.419
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=8 filter=topk40_p90 repeat=0 differing=0 total=256
+131072,8,topk40_p90,cpu_keyed,1,32,1224.083
+131072,8,topk40_p90,readback_cpu_legacy,1,32,2047.440
+131072,8,topk40_p90,readback_cpu_keyed,1,32,2120.811
+131072,8,topk40_p90,metal_compact,1,32,1602.204
+131072,8,topk40_p90,metal_queued,1,32,866.802
+131072,8,topk40_p90,cpu_legacy,1,32,1181.842
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=8 filter=topk40_p90 repeat=1 differing=0 total=256
+131072,8,topk40_p90,readback_cpu_legacy,2,32,2185.247
+131072,8,topk40_p90,readback_cpu_keyed,2,32,2018.268
+131072,8,topk40_p90,metal_compact,2,32,1609.854
+131072,8,topk40_p90,metal_queued,2,32,856.009
+131072,8,topk40_p90,cpu_legacy,2,32,1127.260
+131072,8,topk40_p90,cpu_keyed,2,32,1188.621
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=8 filter=topk40_p90 repeat=2 differing=0 total=256
+131072,8,topk40_p90,readback_cpu_keyed,3,32,2836.940
+131072,8,topk40_p90,metal_compact,3,32,1710.415
+131072,8,topk40_p90,metal_queued,3,32,861.888
+131072,8,topk40_p90,cpu_legacy,3,32,1480.161
+131072,8,topk40_p90,cpu_keyed,3,32,1204.055
+131072,8,topk40_p90,readback_cpu_legacy,3,32,1975.009
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=8 filter=topk40_p90 repeat=3 differing=0 total=256
+131072,8,topk40_p90,metal_compact,4,32,1617.326
+131072,8,topk40_p90,metal_queued,4,32,860.776
+131072,8,topk40_p90,cpu_legacy,4,32,1145.733
+131072,8,topk40_p90,cpu_keyed,4,32,1327.983
+131072,8,topk40_p90,readback_cpu_legacy,4,32,2227.309
+131072,8,topk40_p90,readback_cpu_keyed,4,32,2368.988
+KEYED_CPU_METAL_DIFFERENCES vocab=131072 batch=8 filter=topk40_p90 repeat=4 differing=0 total=256
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1425 filtered out; finished in 7.86s

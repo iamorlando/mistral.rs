@@ -885,30 +885,60 @@ fn try_sample_batch_keyed_metal(
     {
         return Ok(None);
     }
-    let selections = seqs
-        .iter_mut()
-        .zip(rows)
-        .map(|(seq, logits)| {
-            let logits = logits.squeeze(0)?.squeeze(0)?.to_dtype(DType::F32)?;
-            seq.submit_keyed_metal(&logits, 0, max_model_len)
-                .map(|(selection, _)| selection)
-        })
+    let rows = rows
+        .iter()
+        .map(|logits| logits.squeeze(0)?.squeeze(0)?.to_dtype(DType::F32))
         .collect::<Result<Vec<_>>>()?;
+    let sampler = seqs[0].sampler();
+    let compatible = seqs.len() > 1
+        && seqs.len() <= mistralrs_keyed_rng::metal::MAX_SAMPLING_BATCH
+        && seqs
+            .iter()
+            .all(|seq| sampler.keyed_metal_batch_compatible(&seq.sampler()));
+    let selections = if compatible {
+        for (seq, logits) in seqs.iter_mut().zip(&rows) {
+            seq.prepare_keyed_metal_history(logits, max_model_len)?;
+        }
+        let params = seqs
+            .iter()
+            .map(|seq| seq.sampler().keyed_metal_params(seq.keyed_sampling_key))
+            .collect::<Vec<_>>();
+        let mut histories = seqs
+            .iter_mut()
+            .map(|seq| seq.keyed_history.as_mut().unwrap())
+            .collect::<Vec<_>>();
+        mistralrs_keyed_rng::metal::DeviceHistory::sample_batch(
+            &Tensor::stack(&rows, 0)?,
+            &mut histories,
+            &params,
+            sampler.keyed_metal_filter(),
+        )?
+    } else {
+        seqs.iter_mut()
+            .zip(&rows)
+            .map(|(seq, logits)| {
+                seq.submit_keyed_metal(logits, 0, max_model_len, false)
+                    .map(|(selection, _)| selection)
+            })
+            .collect::<Result<Vec<_>>>()?
+    };
+    for (seq, selection) in seqs.iter_mut().zip(&selections) {
+        let eos = seq.effective_eos_tokens(eos, disable_eos_stop);
+        seq.commit_keyed_metal_selection(selection, eos)?;
+    }
     let results = mistralrs_keyed_rng::metal::Selection::readback_batch(
         &selections.iter().collect::<Vec<_>>(),
     )?;
     let mut sampled = Vec::with_capacity(seqs.len());
-    for ((seq, selection), result) in seqs.iter_mut().zip(selections).zip(results) {
-        sampled.push(result.and_then(|(token, logprob)| {
-            seq.pending_keyed_selection = Some(selection);
-            let eos = seq.effective_eos_tokens(eos, disable_eos_stop);
-            seq.commit_keyed_selection(eos)?;
-            Ok(Logprobs {
-                token,
-                logprob,
-                bytes: None,
-                top_logprobs: None,
-            })
+    for (seq, result) in seqs.iter_mut().zip(results) {
+        if result.is_err() {
+            seq.keyed_history = None;
+        }
+        sampled.push(result.map(|(token, logprob)| Logprobs {
+            token,
+            logprob,
+            bytes: None,
+            top_logprobs: None,
         }));
     }
     Ok(Some(sampled))
@@ -1870,6 +1900,30 @@ mod tests {
             .into_sampling_rows()?
             .iter()
             .all(|row| row.device().is_metal()));
+        Ok(())
+    }
+
+    #[cfg(feature = "metal")]
+    #[test]
+    fn keyed_metal_batch_invalid_row_discards_uncommitted_history() -> Result<()> {
+        if !crate::sampler::keyed_sampling_enabled() {
+            return Ok(());
+        }
+        let device = candle_core::Device::new_metal(0)?;
+        let good = Tensor::new(&[0.1f32, 0.2, 0.3, 0.4], &device)?.reshape((1, 1, 4))?;
+        let bad = Tensor::new(&[f32::NAN, 0.2, 0.3, 0.4], &device)?.reshape((1, 1, 4))?;
+        let mut a = sampled_test_sequence(42, 3, 0.9);
+        let mut b = sampled_test_sequence(43, 3, 0.9);
+        let rows = CausalLogitsBatch::PerSequence(vec![good, bad]);
+        let result =
+            try_sample_batch_keyed_metal(&rows, &mut [&mut a, &mut b], 1024, &[], false)?.unwrap();
+        assert!(result[0].is_ok());
+        assert!(result[1].is_err());
+        assert_eq!(
+            a.keyed_history.as_ref().unwrap().state().to_vec1::<u32>()?,
+            vec![4, 1, 1]
+        );
+        assert!(b.keyed_history.is_none());
         Ok(())
     }
 

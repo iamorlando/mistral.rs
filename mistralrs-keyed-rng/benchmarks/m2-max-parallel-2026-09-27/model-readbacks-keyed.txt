@@ -1,0 +1,268 @@
+(lldb) command source -s 0 '/var/folders/hl/3trfqmrn3sjbjb5dwxsvnw800000gn/T/keyed-readback-audit-od_f_rkx/audit.lldb'
+Executing commands in '/var/folders/hl/3trfqmrn3sjbjb5dwxsvnw800000gn/T/keyed-readback-audit-od_f_rkx/audit.lldb'.
+(lldb) target create "/Users/orlando/.cargo-target/debug/mistralrs"
+Current executable set to '/Users/orlando/.cargo-target/debug/mistralrs' (arm64).
+(lldb) settings set target.env-vars MISTRALRS_SAMPLING_RNG=keyed-threefry2x32-v1
+(lldb) breakpoint set --file "/Users/orlando/.cargo/git/checkouts/candle-5b4d092929d18d36/66a8cf1/candle-core/src/metal_backend/mod.rs" --line 2004
+Breakpoint 1: 10 locations.
+(lldb) breakpoint command add 1
+(lldb) breakpoint set --file "/private/tmp/mistral-rngs/mistralrs-keyed-rng/src/metal.rs" --line 92
+Breakpoint 2: where = mistralrs`mistralrs_keyed_rng::metal::readback_boundary::he6206953771b8cc5 + 20 at metal.rs:92:12, address = 0x0000000101d0344c
+(lldb) breakpoint command add 2
+(lldb) run bench -m "/Users/orlando/.cache/mistralrs-benchmarks/SmolLM2-135M-Instruct/12fd25f77366fa6b3b4b768ec3050bf629380bac" --dtype f32 --format plain --token-source none --paged-attn off --device-layers 30 --prompt-len 0 --depth 128 --gen-len 8 --iterations 1 --warmup 1
+2026-09-27T22:45:00.290715Z  INFO mistralrs::commands::bench: Loading model for benchmarking...
+2026-09-27T22:45:00.363173Z  INFO mistralrs_quant::utils::log: Model has 30 repeating layers.
+2026-09-27T22:45:00.363245Z  INFO mistralrs_quant::utils::log: Loading model according to the following repeating layer mappings:
+2026-09-27T22:45:00.394504Z  INFO mistralrs_quant::utils::log: Layers 0-29: metal[4294968705] (52 GB)
+2026-09-27T22:45:00.417967Z  INFO mistralrs_quant::utils::log: DType selected is F32.
+2026-09-27T22:45:00.418930Z  INFO mistralrs_core::pipeline::normal: Loading model weights.
+Loading repeating layers: [00:00:00] [#>--------------------------------------] 1/30 (0s)                                                                       [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [##>-------------------------------------] 2/30 (0s)                                                                       [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [####>-----------------------------------] 3/30 (0s)                                                                       [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [#####>----------------------------------] 4/30 (0s)                                                                       [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [######>---------------------------------] 5/30 (0s)                                                                       [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [########>-------------------------------] 6/30 (0s)                                                                       [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [#########>------------------------------] 7/30 (0s)                                                                       [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [##########>-----------------------------] 8/30 (0s)                                                                       [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [############>---------------------------] 9/30 (0s)                                                                       [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [#############>--------------------------] 10/30 (0s)                                                                      [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [##############>-------------------------] 11/30 (0s)                                                                      [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [################>-----------------------] 12/30 (0s)                                                                      [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [#################>----------------------] 13/30 (0s)                                                                      [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [##################>---------------------] 14/30 (0s)                                                                      [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [####################>-------------------] 15/30 (0s)                                                                      [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [#####################>------------------] 16/30 (0s)                                                                      [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [######################>-----------------] 17/30 (0s)                                                                      [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [########################>---------------] 18/30 (0s)                                                                      [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [#########################>--------------] 19/30 (0s)                                                                      [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [##########################>-------------] 20/30 (0s)                                                                      [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [############################>-----------] 21/30 (0s)                                                                      [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [#############################>----------] 22/30 (0s)                                                                      [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [##############################>---------] 23/30 (0s)                                                                      [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [################################>-------] 24/30 (0s)                                                                      [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [#################################>------] 25/30 (0s)                                                                      [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [##################################>-----] 26/30 (0s)                                                                      [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [####################################>---] 27/30 (0s)                                                                      [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [#####################################>--] 28/30 (0s)                                                                      [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [######################################>-] 29/30 (0s)                                                                      [1A
+[2K[1B
+[2K[1ALoading repeating layers: [00:00:00] [########################################] 30/30 (0s)                                                                      [1A
+[2K[1B
+[2K[1A2026-09-27T22:45:01.614471Z  INFO mistralrs_server_core::mistralrs_for_server_builder: Model loaded.
+2026-09-27T22:45:01.614575Z  INFO mistralrs_core: mistral.rs version: 0.9.4
+2026-09-27T22:45:01.614595Z  INFO mistralrs_core: git revision: 2c6c15b2d5582640447842a910eadfee1ec9b856
+2026-09-27T22:45:01.614743Z  INFO mistralrs_core: Pipeline input modalities are [📝 Text]
+2026-09-27T22:45:01.614768Z  INFO mistralrs_core: Pipeline output modalities are [📝 Text]
+2026-09-27 18:45:01.987589-0400 mistralrs[25338:44131058] [Metal Compiler Warning] Warning: Compilation succeeded with:
+
+program_source:333:9: warning: variable 'valid' is used uninitialized whenever 'if' condition is false [-Wsometimes-uninitialized]
+    if (tid == 0) {
+        ^~~~~~~~
+program_source:351:10: note: uninitialized use occurs here
+    if (!valid) return;
+         ^~~~~
+program_source:333:5: note: remove the 'if' if its condition is always true
+    if (tid == 0) {
+    ^~~~~~~~~~~~~~
+program_source:310:27: note: initialize the variable 'valid' to silence this warning
+    threadgroup uint valid;
+                          ^
+                           = 0
+program_source:510:9: warning: variable 'valid' is used uninitialized whenever 'if' condition is false [-Wsometimes-uninitialized]
+    if (tid == 0) {
+        ^~~~~~~~
+program_source:539:10: note: uninitialized use occurs here
+    if (!valid) return;
+         ^~~~~
+program_source:510:5: note: remove the 'if' if its condition is always true
+    if (tid == 0) {
+    ^~~~~~~~~~~~~~
+program_source:501:27: note: initialize the variable 'valid' to silence this warning
+    threadgroup uint valid;
+                          ^
+                           = 0
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 25338 resuming
+Command #2 'continue' continued the target.
+2026-09-27T22:45:02.100458Z  INFO mistralrs::commands::bench: Model loaded.
+2026-09-27T22:45:02.100477Z  INFO mistralrs::commands::bench: Running 1 warmup iteration(s) per benchmark case...
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 25338 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 25338 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 25338 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 25338 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 25338 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 25338 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 25338 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 25338 resuming
+Command #2 'continue' continued the target.
+2026-09-27T22:45:02.302184Z  INFO mistralrs::commands::bench: Warmup complete.
+2026-09-27T22:45:02.302209Z  INFO mistralrs::commands::bench: Running 1 iteration(s) with prompt lengths [0], 8 generation tokens, decode depths [128]...
+2026-09-27T22:45:02.302214Z  INFO mistralrs::commands::bench: Iteration 1/1...
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 25338 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 25338 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 25338 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 25338 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 25338 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 25338 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 25338 resuming
+Command #2 'continue' continued the target.
+(lldb)  script print("KEYED_SHARED_READBACK", flush=True)
+KEYED_SHARED_READBACK
+(lldb)  continue
+Process 25338 resuming
+Command #2 'continue' continued the target.
+
+Benchmark Results
+=================
+
+Model: /Users/orlando/.cache/mistralrs-benchmarks/SmolLM2-135M-Instruct/12fd25f77366fa6b3b4b768ec3050bf629380bac
+Adapter: base
+Iterations: 1
+
+┌───┬───┬───┐
+│ T ┆ T ┆ L │
+│ e ┆ / ┆ a │
+│ s ┆ s ┆ t │
+│ t ┆   ┆ e │
+│   ┆   ┆ n │
+│   ┆   ┆ c │
+│   ┆   ┆ y │
+╞═══╪═══╪═══╡
+│ D ┆[m 2 [m┆ 3 │
+│ e ┆[m 5 [m┆ 8 │
+│ c ┆[m . [m┆ . │
+│ o ┆[m 7 [m┆ 9 │
+│ d ┆[m ± [m┆ 7 │
+│ e ┆[m 0 [m┆ m │
+│ ( ┆[m . [m┆ s │
+│ 8 ┆[m 0 [m┆ T │
+│ t ┆   ┆ P │
+│ o ┆   ┆ O │
+│ k ┆   ┆ T │
+│ e ┆   ┆   │
+│ n ┆   ┆   │
+│ s ┆   ┆   │
+│ @ ┆   ┆   │
+│ d ┆   ┆   │
+│ 1 ┆   ┆   │
+│ 2 ┆   ┆   │
+│ 8 ┆   ┆   │
+│ ) ┆   ┆   │
+└───┴───┴───┘
+
+Process 25338 launched: '/Users/orlando/.cargo-target/debug/mistralrs' (arm64)
+Process 25338 exited with status = 0 (0x00000000)
+(lldb) breakpoint list
+Current breakpoints:
+1: file = '/Users/orlando/.cargo/git/checkouts/candle-5b4d092929d18d36/66a8cf1/candle-core/src/metal_backend/mod.rs', line = 2004, exact_match = 0, locations = 10, resolved = 10, hit count = 0
+    Breakpoint commands:
+      script print("CANDLE_METAL_READBACK", flush=True)
+      continue
+
+  1.1: where = mistralrs`candle_core::metal_backend::MetalStorage::to_cpu::h816ceffd91b87948 + 36 at mod.rs:2004:20, address = 0x0000000102e01df4, resolved, hit count = 0
+  1.2: where = mistralrs`_$LT$candle_core..metal_backend..MetalStorage$u20$as$u20$candle_core..backend..BackendStorage$GT$::to_cpu_storage::hf11543c2910e2fad + 144 [inlined] candle_core::metal_backend::MetalStorage::to_cpu::hdc815da71b1ce73d at mod.rs:2004:20, address = 0x0000000102e14418, resolved, hit count = 0
+  1.3: where = mistralrs`_$LT$candle_core..metal_backend..MetalStorage$u20$as$u20$candle_core..backend..BackendStorage$GT$::to_cpu_storage::hf11543c2910e2fad + 584 [inlined] candle_core::metal_backend::MetalStorage::to_cpu::hdc87cf0f91f5e540 at mod.rs:2004:20, address = 0x0000000102e145d0, resolved, hit count = 0
+  1.4: where = mistralrs`_$LT$candle_core..metal_backend..MetalStorage$u20$as$u20$candle_core..backend..BackendStorage$GT$::to_cpu_storage::hf11543c2910e2fad + 976 [inlined] candle_core::metal_backend::MetalStorage::to_cpu::h954eeac485fb408c at mod.rs:2004:20, address = 0x0000000102e14758, resolved, hit count = 0
+  1.5: where = mistralrs`_$LT$candle_core..metal_backend..MetalStorage$u20$as$u20$candle_core..backend..BackendStorage$GT$::to_cpu_storage::hf11543c2910e2fad + 1396 [inlined] candle_core::metal_backend::MetalStorage::to_cpu::h3a24f4916e21052d at mod.rs:2004:20, address = 0x0000000102e148fc, resolved, hit count = 0
+  1.6: where = mistralrs`_$LT$candle_core..metal_backend..MetalStorage$u20$as$u20$candle_core..backend..BackendStorage$GT$::to_cpu_storage::hf11543c2910e2fad + 1908 [inlined] candle_core::metal_backend::MetalStorage::to_cpu::hd3fbc6a8ba52211f at mod.rs:2004:20, address = 0x0000000102e14afc, resolved, hit count = 0
+  1.7: where = mistralrs`_$LT$candle_core..metal_backend..MetalStorage$u20$as$u20$candle_core..backend..BackendStorage$GT$::to_cpu_storage::hf11543c2910e2fad + 2320 [inlined] candle_core::metal_backend::MetalStorage::to_cpu::ha555420776565893 at mod.rs:2004:20, address = 0x0000000102e14c98, resolved, hit count = 0
+  1.8: where = mistralrs`_$LT$candle_core..metal_backend..MetalStorage$u20$as$u20$candle_core..backend..BackendStorage$GT$::to_cpu_storage::hf11543c2910e2fad + 2752 [inlined] candle_core::metal_backend::MetalStorage::to_cpu::h763abd21f92a10c7 at mod.rs:2004:20, address = 0x0000000102e14e48, resolved, hit count = 0
+  1.9: where = mistralrs`_$LT$candle_core..metal_backend..MetalStorage$u20$as$u20$candle_core..backend..BackendStorage$GT$::to_cpu_storage::hf11543c2910e2fad + 3172 [inlined] candle_core::metal_backend::MetalStorage::to_cpu::hc7b980a4de55f397 at mod.rs:2004:20, address = 0x0000000102e14fec, resolved, hit count = 0
+  1.10: where = mistralrs`_$LT$candle_core..metal_backend..MetalStorage$u20$as$u20$candle_core..backend..BackendStorage$GT$::to_cpu_storage::hf11543c2910e2fad + 3592 [inlined] candle_core::metal_backend::MetalStorage::to_cpu::h1b04dfe2b8c62fc9 at mod.rs:2004:20, address = 0x0000000102e15190, resolved, hit count = 0
+
+2: file = '/private/tmp/mistral-rngs/mistralrs-keyed-rng/src/metal.rs', line = 92, exact_match = 0, locations = 1, resolved = 1, hit count = 17
+    Breakpoint commands:
+      script print("KEYED_SHARED_READBACK", flush=True)
+      continue
+
+  2.1: where = mistralrs`mistralrs_keyed_rng::metal::readback_boundary::he6206953771b8cc5 + 20 at metal.rs:92:12, address = 0x0000000101d0344c, resolved, hit count = 17
+
+(lldb) quit

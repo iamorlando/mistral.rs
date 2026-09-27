@@ -1,7 +1,7 @@
 use std::{hint::black_box, time::Instant};
 
 use mistralrs_keyed_rng::{
-    metal::{DeviceHistory, Selection, INVALID_TOKEN},
+    metal::{DeviceHistory, Selection},
     Purpose, SequenceKey,
 };
 use rand::SeedableRng;
@@ -102,15 +102,36 @@ impl Case {
         let start = Instant::now();
         for position in 0..steps {
             if mode.starts_with("metal_") {
-                let mut selections = Vec::with_capacity(self.batch);
-                for row in 0..self.batch {
-                    let event = histories[row].event(keys[row], Purpose::Generation, 0)?;
-                    let (selection, _) = self.sampler.sample_keyed_metal(
-                        &metal_rows[row],
-                        &histories[row],
-                        &event,
-                    )?;
-                    selections.push(selection);
+                let selections = if self.batch > 1 {
+                    let params = keys
+                        .iter()
+                        .map(|key| self.sampler.keyed_metal_params(*key))
+                        .collect::<Vec<_>>();
+                    let mut histories = histories.iter_mut().collect::<Vec<_>>();
+                    DeviceHistory::sample_batch(
+                        &Tensor::stack(&metal_rows, 0)?,
+                        &mut histories,
+                        &params,
+                        self.sampler.keyed_metal_filter(),
+                    )?
+                } else {
+                    let mut selections = Vec::with_capacity(self.batch);
+                    for row in 0..self.batch {
+                        let (selection, _) = self.sampler.sample_keyed_metal(
+                            &metal_rows[row],
+                            &histories[row],
+                            keyed::KeyedMetalContext {
+                                key: keys[row],
+                                attempt: 0,
+                                return_logprobs: false,
+                            },
+                        )?;
+                        selections.push(selection);
+                    }
+                    selections
+                };
+                for (history, selection) in histories.iter_mut().zip(&selections) {
+                    history.commit_with_stop_tokens(selection, &[])?;
                 }
                 if mode == "metal_compact" {
                     let refs = selections.iter().collect::<Vec<_>>();
@@ -118,10 +139,6 @@ impl Case {
                     for (context, token) in contexts.iter_mut().zip(tokens) {
                         context.push(token?.0);
                     }
-                }
-                for (history, selection) in histories.iter_mut().zip(&selections) {
-                    let stops = Tensor::new(&[INVALID_TOKEN], &self.device)?;
-                    history.commit(selection, &stops)?;
                 }
             } else {
                 let logits = if mode.starts_with("readback_") {

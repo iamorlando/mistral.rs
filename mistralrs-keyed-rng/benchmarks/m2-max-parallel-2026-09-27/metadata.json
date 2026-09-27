@@ -1,0 +1,75 @@
+{
+  "date": "2026-09-27",
+  "candle_revision": "66a8cf184a5a519671454066b1b9efd446ec9f5c",
+  "keyed_rngs_revision": "9269c77b9bd0095688f93fa6d9e97624211c883b",
+  "cpu": "Apple M2 Max",
+  "gpu": "Apple M2 Max",
+  "logical_cpu_count": 12,
+  "memory_bytes": 68719476736,
+  "macos_version": "27.0",
+  "macos_build": "26A428",
+  "rustc": "1.96.0 (ac68faa20 2026-05-25)",
+  "cargo_profile": "test, opt-level=3, debuginfo, debug assertions",
+  "rustflags": "-C target-cpu=native, from .cargo/config.toml",
+  "features": [
+    "metal",
+    "accelerate"
+  ],
+  "dtype": "f32",
+  "rayon_num_threads_env": null,
+  "candle_metal_compute_per_buffer_env": null,
+  "warmup_steps_per_mode": 8,
+  "timed_steps_per_repeat": 32,
+  "repetitions": 5,
+  "mode_order": "rotates by one per repetition",
+  "prompt_length": 128,
+  "seed": 42,
+  "sequence_seed": "42 + batch row",
+  "temperature": 0.8,
+  "vocabularies": [
+    32768,
+    131072
+  ],
+  "batches": [
+    1,
+    8
+  ],
+  "filters": [
+    "greedy",
+    "categorical",
+    "topk40_p90"
+  ],
+  "penalties": false,
+  "full_logprobs": false,
+  "model_forward": false,
+  "initial_uploads_timed": false,
+  "gpu_completion_timed": true,
+  "post_run_validation_timed": false,
+  "source_base": "2c6c15b2d5582640447842a910eadfee1ec9b856",
+  "source_sha256": {
+    "mistralrs-keyed-rng/src/metal.rs": "1f81270ca53780361eb5f4c28f924a207bfcd8faccc9f64f265e11735768c4c8",
+    "mistralrs-keyed-rng/src/selection.metal": "d1804b60acd579f69a9ad5648e9a971ff80920c8059cc6e6ad04d2c986b5c198",
+    "mistralrs-keyed-rng/src/topk.metal": "5054fd80e03251ef840f520105466f7f7e4b2dc2b99c5c718f0bc40a805e49da",
+    "mistralrs-keyed-rng/src/sampling.metal": "5cc58edb261673069113ff845aa9f61a9e5ad7e32d13f607ddb968ff649e1706",
+    "mistralrs-core/src/sampler/keyed.rs": "bb54fde6d1e2d9f42a0b519f7c5f73a1751dac80a7aa098789639837f3618efe",
+    "mistralrs-core/src/sampler/keyed_bench.rs": "a0daf2fbc713b555b8e42d9ba22504a96d17507e34bd0a9e936e7b5557b59f53",
+    "mistralrs-core/src/pipeline/sampling.rs": "293a22e64c33909239b3edda13c858bb7be77815bf16bf1d4aa955af73d5400c"
+  },
+  "model": {
+    "id": "HuggingFaceTB/SmolLM2-135M-Instruct",
+    "revision": "12fd25f77366fa6b3b4b768ec3050bf629380bac",
+    "model_safetensors_sha256": "5af571cbf074e6d21a03528d2330792e532ca608f24ac70a143f6b369968ab8c",
+    "dtype": "f32",
+    "layers": 30,
+    "vocabulary": 49152,
+    "depths": [
+      128,
+      512
+    ],
+    "generated_tokens": 128,
+    "warmups": 2,
+    "repetitions": 5,
+    "greedy": true,
+    "paged_attention": false
+  }
+}

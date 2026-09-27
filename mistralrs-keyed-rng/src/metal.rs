@@ -1,11 +1,11 @@
 use std::{
     collections::HashMap,
-    sync::{LazyLock, Mutex},
+    sync::{Arc, LazyLock, Mutex},
 };
 
 use candle_core::{DType, Device, Error, MetalStorage, Result, Shape, Storage, Tensor};
 use candle_metal_kernels::metal::ComputePipeline;
-use objc2_metal::{MTLCompileOptions, MTLMathMode, MTLSize};
+use objc2_metal::{MTLCompileOptions, MTLComputePipelineState, MTLMathMode, MTLSize};
 
 use crate::{Purpose, SequenceKey};
 
@@ -14,8 +14,19 @@ const RECORD_WIDTH: usize = 3;
 const EVENT_WIDTH: usize = 4;
 const STATE_WIDTH: usize = 3;
 const THREADS: usize = 64;
+const SELECT_THREADS: usize = 256;
+const SIMD_WIDTH: usize = 32;
+const LOGITS_TILE: usize = 1024;
+const LOGIT_TILE_WIDTH: usize = 4;
+const TOPK_BLOCK: usize = 1024;
+pub const MAX_PARTIAL_TOP_K: usize = 128;
+pub const MAX_SAMPLING_BATCH: usize = 128;
 const SOURCE: &str = concat!(
     include_str!("threefry.metal"),
+    "\n",
+    include_str!("selection.metal"),
+    "\n",
+    include_str!("topk.metal"),
     "\n",
     include_str!("sampling.metal")
 );
@@ -40,6 +51,13 @@ fn pipeline(device: &Device, name: &'static str) -> Result<ComputePipeline> {
         .device()
         .new_compute_pipeline_state_with_function(&function)
         .map_err(Error::wrap)?;
+    if matches!(
+        name,
+        "rng_select" | "rng_logits" | "logits_tiles" | "logits_finish" | "candidates_topk_blocks"
+    ) && pipeline.as_ref().threadExecutionWidth() != SIMD_WIDTH
+    {
+        candle_core::bail!("keyed Metal sampling requires 32-lane SIMD groups");
+    }
     pipelines.insert(key, pipeline.clone());
     Ok(pipeline)
 }
@@ -57,6 +75,21 @@ fn allocate(device: &Device, shape: impl Into<Shape>, dtype: DType) -> Result<Te
         )),
         shape,
     )))
+}
+
+fn allocate_records(device: &Device, rows: usize) -> Result<Tensor> {
+    let dev = device.as_metal_device()?;
+    let count = rows * RECORD_WIDTH;
+    let buffer = dev.allocate_buffer(count * DType::U32.size_in_bytes())?;
+    Ok(Tensor::from((
+        Storage::Metal(MetalStorage::new(buffer, dev.clone(), count, DType::U32)),
+        (rows, RECORD_WIDTH),
+    )))
+}
+
+#[inline(never)]
+fn readback_boundary(device: &Device) -> Result<()> {
+    device.as_metal_device()?.flush_and_wait_current()
 }
 
 fn dispatch(
@@ -115,7 +148,20 @@ fn dispatch(
             depth: 1,
         },
         MTLSize {
-            width: threads.min(THREADS),
+            width: threads.min(
+                if matches!(
+                    name,
+                    "rng_select"
+                        | "rng_logits"
+                        | "logits_tiles"
+                        | "logits_finish"
+                        | "candidates_topk_blocks"
+                ) {
+                    SELECT_THREADS
+                } else {
+                    THREADS
+                },
+            ),
             height: 1,
             depth: 1,
         },
@@ -173,10 +219,63 @@ pub fn candidates(probs: &Tensor, sorted: bool) -> Result<(Tensor, Tensor)> {
     Ok((values, ids))
 }
 
+pub fn top_candidates(probs: &Tensor, k: usize) -> Result<(Tensor, Tensor)> {
+    let (rows, width) = probs.dims2()?;
+    if probs.dtype() != DType::F32
+        || rows == 0
+        || width == 0
+        || k == 0
+        || k > MAX_PARTIAL_TOP_K
+        || probs.elem_count() > u32::MAX as usize / 2
+    {
+        candle_core::bail!("invalid partial Metal top-k inputs");
+    }
+    let k = k.min(width);
+    let mut groups = width.div_ceil(TOPK_BLOCK);
+    let mut values = allocate(probs.device(), (rows, groups * k), DType::F32)?;
+    let mut ids = allocate(probs.device(), values.shape(), DType::U32)?;
+    dispatch(
+        "candidates_topk_blocks",
+        &[probs],
+        &[&values, &ids],
+        &[width as u32, k as u32, groups as u32, 0],
+        &[],
+        rows * groups * SELECT_THREADS,
+    )?;
+    while groups > 1 {
+        let pairs = groups.div_ceil(2);
+        let next_values = allocate(probs.device(), (rows, pairs * k), DType::F32)?;
+        let next_ids = allocate(probs.device(), next_values.shape(), DType::U32)?;
+        dispatch(
+            "candidates_topk_merge",
+            &[&values, &ids],
+            &[&next_values, &next_ids],
+            &[k as u32, groups as u32, 0, 0],
+            &[],
+            rows * pairs * k * 2,
+        )?;
+        values = next_values;
+        ids = next_ids;
+        groups = pairs;
+    }
+    Ok((values, ids))
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Filter {
     pub top_k: usize,
     pub top_p: f32,
+    pub min_p: f32,
+    pub greedy: bool,
+}
+
+pub struct LogitsSampling {
+    pub key: SequenceKey,
+    pub attempt: u32,
+    pub temperature: f32,
+    pub frequency: f32,
+    pub presence: f32,
+    pub repetition: f32,
     pub min_p: f32,
     pub greedy: bool,
 }
@@ -187,14 +286,63 @@ pub struct Selection {
 }
 
 impl Selection {
+    fn into_rows(self) -> Result<Vec<Self>> {
+        (0..self.records.dim(0)?)
+            .map(|row| {
+                Ok(Self {
+                    records: self.records.narrow(0, row, 1)?,
+                    tokens: self.tokens.narrow(0, row, 1)?,
+                })
+            })
+            .collect()
+    }
+
     pub fn tokens(&self) -> &Tensor {
         &self.tokens
     }
 
     pub fn readback(&self) -> Result<Vec<(u32, f32)>> {
-        self.records
-            .to_vec2::<u32>()?
-            .into_iter()
+        readback_boundary(self.records.device())?;
+        self.read_completed().into_iter().collect()
+    }
+
+    pub fn readback_batch(selections: &[&Self]) -> Result<Vec<Result<(u32, f32)>>> {
+        let Some(first) = selections.first() else {
+            return Ok(Vec::new());
+        };
+        if selections.iter().any(|selection| {
+            !first
+                .records
+                .device()
+                .same_device(selection.records.device())
+        }) {
+            candle_core::bail!("keyed readback requires one Candle device");
+        }
+        readback_boundary(first.records.device())?;
+        Ok(selections
+            .iter()
+            .flat_map(|selection| selection.read_completed())
+            .collect())
+    }
+
+    fn read_completed(&self) -> Vec<Result<(u32, f32)>> {
+        let (storage, layout) = self.records.storage_and_layout();
+        let Storage::Metal(storage) = &*storage else {
+            unreachable!()
+        };
+        // These shared buffers are immutable after the producer completes at readback_boundary.
+        let words = unsafe {
+            std::slice::from_raw_parts(
+                storage
+                    .buffer()
+                    .contents()
+                    .cast::<u32>()
+                    .add(layout.start_offset()),
+                self.records.elem_count(),
+            )
+        };
+        words
+            .chunks_exact(RECORD_WIDTH)
             .map(|row| {
                 if row[2] != 0 || row[0] == INVALID_TOKEN {
                     candle_core::bail!("invalid or empty keyed sampling distribution");
@@ -202,23 +350,6 @@ impl Selection {
                 Ok((row[0], f32::from_bits(row[1])))
             })
             .collect()
-    }
-
-    pub fn readback_batch(selections: &[&Self]) -> Result<Vec<Result<(u32, f32)>>> {
-        let records = selections
-            .iter()
-            .map(|selection| &selection.records)
-            .collect::<Vec<_>>();
-        Ok(Tensor::cat(&records, 0)?
-            .to_vec2::<u32>()?
-            .into_iter()
-            .map(|row| {
-                if row[2] != 0 || row[0] == INVALID_TOKEN {
-                    candle_core::bail!("invalid or empty keyed sampling distribution");
-                }
-                Ok((row[0], f32::from_bits(row[1])))
-            })
-            .collect())
     }
 }
 
@@ -246,11 +377,12 @@ pub fn select(
     {
         candle_core::bail!("invalid keyed sampling tensors or filters");
     }
-    let records = allocate(weights.device(), (rows, RECORD_WIDTH), DType::U32)?;
+    let records = allocate_records(weights.device(), rows)?;
+    let tokens = allocate(weights.device(), (rows, 1), DType::U32)?;
     dispatch(
         "rng_select",
         &[weights, ids, reporting, events],
-        &[&records],
+        &[&records, &tokens],
         &[
             width as u32,
             filter.top_k.min(width) as u32,
@@ -258,9 +390,8 @@ pub fn select(
             0,
         ],
         &[filter.top_p, filter.min_p],
-        rows,
+        rows * SELECT_THREADS,
     )?;
-    let tokens = records.narrow(1, 0, 1)?.contiguous()?;
     Ok(Selection { records, tokens })
 }
 
@@ -272,9 +403,218 @@ pub struct DeviceHistory {
     committed_len: usize,
     capacity: usize,
     vocab: usize,
+    stop_tokens: (Vec<u32>, Tensor),
+    batch: Option<(Arc<HistoryBatch>, usize)>,
+}
+
+struct HistoryBatch {
+    counts: Tensor,
+    state: Tensor,
+    rows: usize,
 }
 
 impl DeviceHistory {
+    fn batch_tensors(histories: &mut [&mut Self]) -> Result<(Tensor, Tensor)> {
+        if let Some((batch, _)) = &histories[0].batch {
+            if batch.rows == histories.len()
+                && histories.iter().enumerate().all(|(row, history)| {
+                    history
+                        .batch
+                        .as_ref()
+                        .is_some_and(|(other, index)| *index == row && Arc::ptr_eq(batch, other))
+                })
+            {
+                return Ok((batch.counts.clone(), batch.state.clone()));
+            }
+        }
+        let counts = Tensor::cat(&histories.iter().map(|h| &h.counts).collect::<Vec<_>>(), 0)?;
+        let state = Tensor::cat(&histories.iter().map(|h| &h.state).collect::<Vec<_>>(), 0)?;
+        let batch = Arc::new(HistoryBatch {
+            counts,
+            state,
+            rows: histories.len(),
+        });
+        for (row, history) in histories.iter_mut().enumerate() {
+            history.counts = batch.counts.narrow(0, row * 2, 2)?;
+            history.state = batch.state.narrow(0, row * STATE_WIDTH, STATE_WIDTH)?;
+            history.batch = Some((batch.clone(), row));
+        }
+        Ok((batch.counts.clone(), batch.state.clone()))
+    }
+
+    pub fn sample_batch(
+        logits: &Tensor,
+        histories: &mut [&mut Self],
+        params: &[LogitsSampling],
+        filter: Filter,
+    ) -> Result<Vec<Selection>> {
+        let (rows, width) = logits.dims2()?;
+        if rows == 0
+            || rows > MAX_SAMPLING_BATCH
+            || rows != histories.len()
+            || rows != params.len()
+            || logits.dtype() != DType::F32
+            || logits.elem_count() > u32::MAX as usize / 2
+            || histories
+                .iter()
+                .any(|h| h.vocab != width || !h.state.device().same_device(logits.device()))
+            || params.iter().any(|p| {
+                !p.temperature.is_finite()
+                    || p.temperature <= 0.0
+                    || !p.repetition.is_finite()
+                    || p.repetition <= 0.0
+            })
+            || !filter.top_p.is_finite()
+            || !filter.min_p.is_finite()
+        {
+            candle_core::bail!("invalid batched Metal sampling inputs");
+        }
+        let (counts, state) = Self::batch_tensors(histories)?;
+        let floats = params
+            .iter()
+            .flat_map(|p| [p.temperature.recip(), p.frequency, p.presence, p.repetition])
+            .collect::<Vec<_>>();
+        let unfiltered = filter.top_k == 0
+            && !(filter.top_p > 0.0 && filter.top_p < 1.0)
+            && !(filter.min_p > 0.0 && filter.min_p < 1.0);
+        if filter.greedy || unfiltered {
+            let tile_count = width.div_ceil(LOGITS_TILE);
+            let weights = allocate(logits.device(), (rows, width), DType::F32)?;
+            let tiles = allocate(
+                logits.device(),
+                (rows * tile_count, LOGIT_TILE_WIDTH),
+                DType::F32,
+            )?;
+            let records = allocate_records(logits.device(), rows)?;
+            let tokens = allocate(logits.device(), (rows, 1), DType::U32)?;
+            let ints = params
+                .iter()
+                .flat_map(|p| {
+                    let key = p.key.words(Purpose::Generation);
+                    [
+                        width as u32,
+                        u32::from(filter.greedy),
+                        key[0],
+                        key[1],
+                        p.attempt,
+                    ]
+                })
+                .collect::<Vec<_>>();
+            dispatch(
+                "logits_tiles",
+                &[logits, &counts],
+                &[&weights, &tiles],
+                &[width as u32],
+                &floats,
+                rows * tile_count * SELECT_THREADS,
+            )?;
+            dispatch(
+                "logits_finish",
+                &[&weights, &tiles, &state],
+                &[&records, &tokens],
+                &ints,
+                &[],
+                rows * SELECT_THREADS,
+            )?;
+            return Selection { records, tokens }.into_rows();
+        }
+        let scores = allocate(logits.device(), (rows, width), DType::F32)?;
+        let events = allocate(logits.device(), (rows, EVENT_WIDTH), DType::U32)?;
+        let ints = params
+            .iter()
+            .flat_map(|p| {
+                let key = p.key.words(Purpose::Generation);
+                [width as u32, key[0], key[1], p.attempt]
+            })
+            .collect::<Vec<_>>();
+        dispatch(
+            "batch_logits",
+            &[logits, &counts, &state],
+            &[&scores, &events],
+            &ints,
+            &floats,
+            rows * width,
+        )?;
+        let probs = candle_nn::ops::softmax_last_dim(&scores)?;
+        let sorted = filter.top_k > 0 || (filter.top_p > 0.0 && filter.top_p < 1.0);
+        let (weights, ids) = if filter.top_k > 0 && filter.top_k <= MAX_PARTIAL_TOP_K {
+            top_candidates(&probs, filter.top_k)?
+        } else {
+            candidates(&probs, sorted)?
+        };
+        select(&weights, &ids, &weights, &events, filter)?.into_rows()
+    }
+
+    pub fn sample_logits(&self, logits: &Tensor, params: LogitsSampling) -> Result<Selection> {
+        if logits.dims() != [self.vocab]
+            || logits.dtype() != DType::F32
+            || !params.temperature.is_finite()
+            || params.temperature <= 0.0
+            || !params.repetition.is_finite()
+            || params.repetition <= 0.0
+            || !params.min_p.is_finite()
+        {
+            candle_core::bail!("invalid fused Metal sampling inputs");
+        }
+        let records = allocate_records(logits.device(), 1)?;
+        let tokens = allocate(logits.device(), (1, 1), DType::U32)?;
+        let key = params.key.words(Purpose::Generation);
+        if params.greedy || !(params.min_p > 0.0 && params.min_p < 1.0) {
+            let tile_count = self.vocab.div_ceil(LOGITS_TILE);
+            let weights = allocate(logits.device(), self.vocab, DType::F32)?;
+            let tiles = allocate(logits.device(), (tile_count, LOGIT_TILE_WIDTH), DType::F32)?;
+            dispatch(
+                "logits_tiles",
+                &[logits, &self.counts],
+                &[&weights, &tiles],
+                &[self.vocab as u32],
+                &[
+                    params.temperature.recip(),
+                    params.frequency,
+                    params.presence,
+                    params.repetition,
+                ],
+                tile_count * SELECT_THREADS,
+            )?;
+            dispatch(
+                "logits_finish",
+                &[&weights, &tiles, &self.state],
+                &[&records, &tokens],
+                &[
+                    self.vocab as u32,
+                    u32::from(params.greedy),
+                    key[0],
+                    key[1],
+                    params.attempt,
+                ],
+                &[],
+                SELECT_THREADS,
+            )?;
+            return Ok(Selection { records, tokens });
+        }
+        dispatch(
+            "rng_logits",
+            &[logits, &self.counts, &self.state],
+            &[&records, &tokens],
+            &[
+                self.vocab as u32,
+                u32::from(params.greedy),
+                key[0],
+                key[1],
+                params.attempt,
+            ],
+            &[
+                params.temperature.recip(),
+                params.frequency,
+                params.presence,
+                params.repetition,
+                params.min_p,
+            ],
+            SELECT_THREADS,
+        )?;
+        Ok(Selection { records, tokens })
+    }
+
     pub fn new(
         tokens: &[u32],
         prompt_len: usize,
@@ -310,6 +650,8 @@ impl DeviceHistory {
             committed_len: tokens.len(),
             capacity,
             vocab,
+            stop_tokens: (Vec::new(), Tensor::new(&[INVALID_TOKEN], device)?),
+            batch: None,
         })
     }
 
@@ -397,5 +739,18 @@ impl DeviceHistory {
         self.last_token = Some(selection.tokens.clone());
         self.committed_len += 1;
         Ok(())
+    }
+
+    pub fn commit_with_stop_tokens(&mut self, selection: &Selection, tokens: &[u32]) -> Result<()> {
+        if self.stop_tokens.0 != tokens {
+            let values = if tokens.is_empty() {
+                &[INVALID_TOKEN]
+            } else {
+                tokens
+            };
+            self.stop_tokens = (tokens.to_vec(), Tensor::new(values, self.state.device())?);
+        }
+        let stops = self.stop_tokens.1.clone();
+        self.commit(selection, &stops)
     }
 }

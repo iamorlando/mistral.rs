@@ -43,12 +43,17 @@ probabilities, and `[key0, key1, position, attempt]` event rows on one Candle de
 It applies top-k, top-p relative to retained top-k mass, then min-p and categorical
 selection on device. Nucleus inputs must be sorted. `metal::candidates` provides a
 stable descending merge sort with vocabulary-ID tie breaking at arbitrary widths.
+`metal::top_candidates` uses block sorts and a pruned merge tree for exact top-k up
+to 128, avoiding a full vocabulary sort. Selection uses parallel SIMD reductions
+and prefix sums. Unfiltered logits are processed in 1,024-token tiles distributed
+across the GPU, followed by a tile reduction and conditional categorical draw.
 Greedy mode selects the maximum score with no categorical draw, which also permits
 position-keyed scoring consumers. Vocabulary IDs remain u32, including IDs above
 the exact f32 integer range. Selected logprobs come from the reporting tensor.
 
 `Selection::tokens` is a device `[rows, 1]` tensor. `readback` is an explicit compact
-reporting boundary; `readback_batch` combines records into one readback. Invalid
+reporting boundary; `readback_batch` waits once and reads immutable shared-memory
+records, without a staging-buffer copy. This is still a host readback. Invalid
 weights produce an error record and never an arbitrary valid token. `probe` is a
 separate diagnostics operation, absent from the production path.
 
@@ -57,7 +62,10 @@ position, and active/EOS state. Penalties and accepted-token commits run on Cand
 own command encoder. A selection may be retried before commit. The caller must
 commit only valid selections for active sequences, then stop scheduling inactive
 rows. Selected tokens can directly become subsequent model inputs. State is
-sequence-owned and survives reordering. All bindings check device identity,
+sequence-owned and survives reordering. Compatible batches share count/state
+allocations and execute batch-wide sampling kernels. Rebatching gathers current
+state on the GPU; steady batches reuse those allocations. Stop-token tensors are
+cached until the stop list changes. All bindings check device identity,
 contiguity, dtypes, dimensions and view offsets; read/write bindings participate
 in Candle's automatic barriers and buffer lifetime management.
 
@@ -66,7 +74,8 @@ in Candle's automatic barriers and buffer lifetime management.
 Set `MISTRALRS_SAMPLING_RNG=keyed-threefry2x32-v1` before starting the process.
 The default remains Isaac64. This intentionally changes seeded output when enabled.
 Ordinary eligible Metal batches keep logits/candidates on device and read one
-compact batch of selected records. Device history supplies penalties and the next
+compact batch of selected records. History commits are queued before that read.
+Device history supplies penalties and the next
 one-token text decode input. Full logprob requests retain device selection and read additional reporting
 probabilities afterward. Custom processors and DRY use the host sampler with the
 same logical RNG contract. Grammar checks still run on
@@ -100,10 +109,12 @@ Tests require a real Metal device and fail if it is unavailable. Coverage includ
 offsets, same-hardware/different-Candle-device rejection, categorical frequencies,
 conditional retry independence, replay and reordering, filtering, unmodified
 reporting probabilities, large IDs, invalid mass, stable sorting through 131,071
-candidates, and queued device history/penalty/EOS updates.
+candidates, fused logits against CPU CDF references, exact partial top-k through
+131,072 candidates, batch splits/joins, and queued device history/penalty/EOS updates.
 
-These checks use synthetic logits and device feedback. No complete model generation
-or end-to-end throughput benchmark was run. CUDA was not built or run on this Mac.
+The correctness checks use synthetic logits and device feedback. The benchmark
+report also includes complete model decode measurements with a pinned SmolLM2
+checkpoint. CUDA was not built or run on this Mac.
 
 The [sampling benchmark and runtime readback audit](benchmarks/README.md) compare
 the actual CPU and Metal samplers, including completed GPU execution. Local

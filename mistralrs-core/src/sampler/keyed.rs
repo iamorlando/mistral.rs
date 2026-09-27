@@ -8,6 +8,13 @@ pub(crate) struct KeyedSampleContext<'a> {
     pub uniform: f32,
 }
 
+#[cfg(feature = "metal")]
+pub(crate) struct KeyedMetalContext {
+    pub key: mistralrs_keyed_rng::SequenceKey,
+    pub attempt: u32,
+    pub return_logprobs: bool,
+}
+
 pub(crate) fn keyed_sampling_enabled() -> bool {
     static ENABLED: LazyLock<bool> = LazyLock::new(|| {
         std::env::var("MISTRALRS_SAMPLING_RNG").is_ok_and(|value| value == RNG_VERSION)
@@ -16,6 +23,45 @@ pub(crate) fn keyed_sampling_enabled() -> bool {
 }
 
 impl Sampler {
+    #[cfg(feature = "metal")]
+    pub(crate) fn keyed_metal_batch_compatible(&self, other: &Self) -> bool {
+        self.can_sample_keyed_metal()
+            && other.can_sample_keyed_metal()
+            && self.logits_bias.is_empty()
+            && other.logits_bias.is_empty()
+            && self.temperature.is_none() == other.temperature.is_none()
+            && self.top_k == other.top_k
+            && self.top_p == other.top_p
+            && self.min_p == other.min_p
+    }
+
+    #[cfg(feature = "metal")]
+    pub(crate) fn keyed_metal_params(
+        &self,
+        key: mistralrs_keyed_rng::SequenceKey,
+    ) -> mistralrs_keyed_rng::metal::LogitsSampling {
+        mistralrs_keyed_rng::metal::LogitsSampling {
+            key,
+            attempt: 0,
+            temperature: self.temperature.unwrap_or(1.0) as f32,
+            frequency: self.frequency_penalty.unwrap_or(0.0),
+            presence: self.presence_penalty.unwrap_or(0.0),
+            repetition: self.repetition_penalty.unwrap_or(1.0),
+            min_p: self.min_p as f32,
+            greedy: self.temperature.is_none(),
+        }
+    }
+
+    #[cfg(feature = "metal")]
+    pub(crate) fn keyed_metal_filter(&self) -> mistralrs_keyed_rng::metal::Filter {
+        mistralrs_keyed_rng::metal::Filter {
+            top_k: self.top_k.max(0) as usize,
+            top_p: self.top_p as f32,
+            min_p: self.min_p as f32,
+            greedy: self.temperature.is_none(),
+        }
+    }
+
     pub(crate) fn sample_keyed_cpu(
         &self,
         logits: Tensor,
@@ -37,12 +83,40 @@ impl Sampler {
         let reporting =
             candle_nn::ops::softmax_last_dim(&(&logits / temperature)?)?.to_vec1::<f32>()?;
         let mut sampling = reporting.clone();
-        self.filter_top_kp_min_p(&mut sampling);
-        Self::normalize_probs(&mut sampling)?;
-        let mut order = (0..sampling.len()).collect::<Vec<_>>();
-        if self.top_k > 0 || (self.top_p > 0.0 && self.top_p < 1.0) {
-            order.sort_unstable_by(|&a, &b| reporting[b].total_cmp(&reporting[a]).then(a.cmp(&b)));
+        let order = if self.top_k > 0 || (self.top_p > 0.0 && self.top_p < 1.0) {
+            let k = if self.top_k > 0 {
+                self.top_k as usize
+            } else {
+                sampling.len()
+            };
+            let retained = partial_sort_top_k(&mut sampling, k, true);
+            if self.top_p > 0.0 && self.top_p < 1.0 {
+                let cutoff = top_p_cutoff(self.top_p as f32, retained.iter().map(|(_, p)| *p));
+                let mut cumulative = 0.0;
+                for &(token, probability) in &retained {
+                    if cumulative >= cutoff {
+                        sampling[token as usize] = 0.0;
+                    } else {
+                        cumulative += probability;
+                    }
+                }
+            }
+            retained
+                .into_iter()
+                .map(|(token, _)| token as usize)
+                .collect::<Vec<_>>()
+        } else {
+            (0..sampling.len()).collect::<Vec<_>>()
+        };
+        if self.min_p > 0.0 && self.min_p < 1.0 {
+            let threshold = self.min_p as f32 * reporting.iter().copied().fold(0.0, f32::max);
+            for probability in &mut sampling {
+                if *probability <= threshold {
+                    *probability = 0.0;
+                }
+            }
         }
+        Self::normalize_probs(&mut sampling)?;
         let mut cumulative = 0.0;
         let mut chosen = None;
         for token in order {
@@ -74,9 +148,33 @@ impl Sampler {
         &self,
         logits: &Tensor,
         history: &mistralrs_keyed_rng::metal::DeviceHistory,
-        event: &Tensor,
-    ) -> Result<(mistralrs_keyed_rng::metal::Selection, Tensor)> {
-        use mistralrs_keyed_rng::metal::{select, Filter};
+        context: KeyedMetalContext,
+    ) -> Result<(mistralrs_keyed_rng::metal::Selection, Option<Tensor>)> {
+        use mistralrs_keyed_rng::metal::{select, Filter, LogitsSampling};
+        let direct = self.logits_bias.is_empty()
+            && (self.temperature.is_none()
+                || (self.top_k <= 0 && !(self.top_p > 0.0 && self.top_p < 1.0)));
+        let direct = if direct {
+            let selection = history.sample_logits(
+                logits,
+                LogitsSampling {
+                    key: context.key,
+                    attempt: context.attempt,
+                    temperature: self.temperature.unwrap_or(1.0) as f32,
+                    frequency: self.frequency_penalty.unwrap_or(0.0),
+                    presence: self.presence_penalty.unwrap_or(0.0),
+                    repetition: self.repetition_penalty.unwrap_or(1.0),
+                    min_p: self.min_p as f32,
+                    greedy: self.temperature.is_none(),
+                },
+            )?;
+            if !context.return_logprobs {
+                return Ok((selection, None));
+            }
+            Some(selection)
+        } else {
+            None
+        };
         let mut logits = history.penalties(
             logits,
             self.frequency_penalty.unwrap_or(0.0),
@@ -94,14 +192,25 @@ impl Sampler {
         }
         let temperature = self.temperature.unwrap_or(1.0);
         let probs = candle_nn::ops::softmax_last_dim(&(&logits / temperature)?)?;
+        if let Some(selection) = direct {
+            return Ok((selection, Some(probs)));
+        }
         let sorted = self.temperature.is_some()
             && (self.top_k > 0 || (self.top_p > 0.0 && self.top_p < 1.0));
-        let (weights, ids) = mistralrs_keyed_rng::metal::candidates(&probs.unsqueeze(0)?, sorted)?;
+        let (weights, ids) = if sorted
+            && self.top_k > 0
+            && self.top_k as usize <= mistralrs_keyed_rng::metal::MAX_PARTIAL_TOP_K
+        {
+            mistralrs_keyed_rng::metal::top_candidates(&probs.unsqueeze(0)?, self.top_k as usize)?
+        } else {
+            mistralrs_keyed_rng::metal::candidates(&probs.unsqueeze(0)?, sorted)?
+        };
+        let event = history.event(context.key, Purpose::Generation, context.attempt)?;
         let selection = select(
             &weights,
             &ids,
             &weights,
-            event,
+            &event,
             Filter {
                 top_k: self.top_k.max(0) as usize,
                 top_p: self.top_p as f32,
@@ -109,7 +218,7 @@ impl Sampler {
                 greedy: self.temperature.is_none(),
             },
         )?;
-        Ok((selection, probs))
+        Ok((selection, Some(probs)))
     }
 }
 
@@ -127,13 +236,13 @@ impl crate::sequence::Sequence {
             self.pending_keyed_selection = None;
             if logits.device().is_metal() && self.sampler().can_sample_keyed_metal() {
                 let (selection, reporting) =
-                    self.submit_keyed_metal(&logits, attempt, max_model_len)?;
+                    self.submit_keyed_metal(&logits, attempt, max_model_len, return_logprobs)?;
                 let (token, logprob) = selection.readback()?[0];
                 self.pending_keyed_selection = Some(selection);
                 if return_logprobs {
                     return self.sampler().logprobs_from_probs(
                         token,
-                        &reporting.to_vec1::<f32>()?,
+                        &reporting.expect("reporting requested").to_vec1::<f32>()?,
                         true,
                     );
                 }
@@ -165,7 +274,27 @@ impl crate::sequence::Sequence {
         logits: &Tensor,
         attempt: u32,
         max_model_len: usize,
-    ) -> Result<(mistralrs_keyed_rng::metal::Selection, Tensor)> {
+        return_logprobs: bool,
+    ) -> Result<(mistralrs_keyed_rng::metal::Selection, Option<Tensor>)> {
+        self.prepare_keyed_metal_history(logits, max_model_len)?;
+        let history = self.keyed_history.as_ref().unwrap();
+        self.sampler().sample_keyed_metal(
+            logits,
+            history,
+            KeyedMetalContext {
+                key: self.keyed_sampling_key,
+                attempt,
+                return_logprobs,
+            },
+        )
+    }
+
+    #[cfg(feature = "metal")]
+    pub(crate) fn prepare_keyed_metal_history(
+        &mut self,
+        logits: &Tensor,
+        max_model_len: usize,
+    ) -> Result<()> {
         self.pending_keyed_selection = None;
         let len = self.committed_toks().len();
         let vocab = logits.elem_count();
@@ -186,36 +315,40 @@ impl crate::sequence::Sequence {
                 logits.device(),
             )?);
         }
-        let history = self.keyed_history.as_ref().unwrap();
-        let event = history.event(self.keyed_sampling_key, Purpose::Generation, attempt)?;
-        self.sampler().sample_keyed_metal(logits, history, &event)
+        Ok(())
     }
 
     #[cfg(feature = "metal")]
     pub(crate) fn commit_keyed_selection(&mut self, eos: Option<&[u32]>) -> Result<()> {
         if let Some(selection) = self.pending_keyed_selection.take() {
-            let mut stops = if self
-                .tool_call_state
-                .as_ref()
-                .is_some_and(|state| state.required_tool_call_unsatisfied())
-            {
-                Vec::new()
-            } else {
-                self.stop_tokens()
-                    .iter()
-                    .copied()
-                    .chain(eos.unwrap_or_default().iter().copied())
-                    .collect::<Vec<_>>()
-            };
-            if stops.is_empty() {
-                stops.push(mistralrs_keyed_rng::metal::INVALID_TOKEN);
-            }
-            let stops = Tensor::new(stops.as_slice(), selection.tokens().device())?;
-            self.keyed_history
-                .as_mut()
-                .unwrap()
-                .commit(&selection, &stops)?;
+            self.commit_keyed_metal_selection(&selection, eos)?;
         }
+        Ok(())
+    }
+
+    #[cfg(feature = "metal")]
+    pub(crate) fn commit_keyed_metal_selection(
+        &mut self,
+        selection: &mistralrs_keyed_rng::metal::Selection,
+        eos: Option<&[u32]>,
+    ) -> Result<()> {
+        let stops = if self
+            .tool_call_state
+            .as_ref()
+            .is_some_and(|state| state.required_tool_call_unsatisfied())
+        {
+            Vec::new()
+        } else {
+            self.stop_tokens()
+                .iter()
+                .copied()
+                .chain(eos.unwrap_or_default().iter().copied())
+                .collect::<Vec<_>>()
+        };
+        self.keyed_history
+            .as_mut()
+            .unwrap()
+            .commit_with_stop_tokens(selection, &stops)?;
         Ok(())
     }
 }

@@ -1,0 +1,16 @@
+{
+  "keyed_rng_cpu_tests": "2 passed",
+  "keyed_rng_metal_tests": "10 passed; 1 manual profiling test ignored",
+  "core_keyed_metal_tests": "3 passed",
+  "core_seeded_sampling_order_test": "1 passed",
+  "core_sampler_tests": "12 passed",
+  "sampling_benchmark": "360 observations; history and mode-parity assertions passed",
+  "sampler_readback_audit_batch1": "passed",
+  "sampler_readback_audit_batch8": "passed",
+  "model_readback_audit_keyed": "0 Candle tensor copies; 8 shared result reads / 8 generated tokens",
+  "model_readback_audit_legacy": "8 Candle tensor copies / 8 generated tokens",
+  "cargo check -p mistralrs-core --features metal,accelerate --tests": "passed",
+  "cargo check -p mistralrs-core": "passed",
+  "cargo clippy -p mistralrs-keyed-rng --features metal --all-targets -- -D warnings": "passed",
+  "cargo fmt --all -- --check": "passed"
+}

@@ -1,0 +1,135 @@
+{
+  "features": "metal,accelerate",
+  "runs": [
+    {
+      "mode": "cpu_legacy",
+      "command": [
+        "/Users/orlando/.cargo-target/debug/mistralrs",
+        "bench",
+        "-m",
+        "/Users/orlando/.cache/mistralrs-benchmarks/SmolLM2-135M-Instruct/12fd25f77366fa6b3b4b768ec3050bf629380bac",
+        "--dtype",
+        "f32",
+        "--format",
+        "plain",
+        "--token-source",
+        "none",
+        "--paged-attn",
+        "off",
+        "--device-layers",
+        "30",
+        "--prompt-len",
+        "0",
+        "--depth",
+        "128,512",
+        "--gen-len",
+        "128",
+        "--iterations",
+        "5",
+        "--warmup",
+        "2",
+        "--cpu"
+      ],
+      "results": [
+        {
+          "depth": 128,
+          "tokens_per_second": 69.3,
+          "spread": 1.0,
+          "tpot_ms": 14.44
+        },
+        {
+          "depth": 512,
+          "tokens_per_second": 68.9,
+          "spread": 0.8,
+          "tpot_ms": 14.53
+        }
+      ]
+    },
+    {
+      "mode": "metal_legacy",
+      "command": [
+        "/Users/orlando/.cargo-target/debug/mistralrs",
+        "bench",
+        "-m",
+        "/Users/orlando/.cache/mistralrs-benchmarks/SmolLM2-135M-Instruct/12fd25f77366fa6b3b4b768ec3050bf629380bac",
+        "--dtype",
+        "f32",
+        "--format",
+        "plain",
+        "--token-source",
+        "none",
+        "--paged-attn",
+        "off",
+        "--device-layers",
+        "30",
+        "--prompt-len",
+        "0",
+        "--depth",
+        "128,512",
+        "--gen-len",
+        "128",
+        "--iterations",
+        "5",
+        "--warmup",
+        "2"
+      ],
+      "results": [
+        {
+          "depth": 128,
+          "tokens_per_second": 273.9,
+          "spread": 0.3,
+          "tpot_ms": 3.65
+        },
+        {
+          "depth": 512,
+          "tokens_per_second": 247.1,
+          "spread": 0.3,
+          "tpot_ms": 4.05
+        }
+      ]
+    },
+    {
+      "mode": "metal_keyed",
+      "command": [
+        "/Users/orlando/.cargo-target/debug/mistralrs",
+        "bench",
+        "-m",
+        "/Users/orlando/.cache/mistralrs-benchmarks/SmolLM2-135M-Instruct/12fd25f77366fa6b3b4b768ec3050bf629380bac",
+        "--dtype",
+        "f32",
+        "--format",
+        "plain",
+        "--token-source",
+        "none",
+        "--paged-attn",
+        "off",
+        "--device-layers",
+        "30",
+        "--prompt-len",
+        "0",
+        "--depth",
+        "128,512",
+        "--gen-len",
+        "128",
+        "--iterations",
+        "5",
+        "--warmup",
+        "2"
+      ],
+      "results": [
+        {
+          "depth": 128,
+          "tokens_per_second": 264.9,
+          "spread": 0.9,
+          "tpot_ms": 3.78
+        },
+        {
+          "depth": 512,
+          "tokens_per_second": 240.3,
+          "spread": 0.4,
+          "tpot_ms": 4.16
+        }
+      ]
+    }
+  ]
+}
