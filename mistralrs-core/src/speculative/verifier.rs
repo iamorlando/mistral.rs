@@ -42,7 +42,8 @@ pub(crate) fn can_batch_greedy_device_verify(seqs: &[&mut Sequence]) -> bool {
 
 #[cfg(feature = "cuda")]
 fn sparse_rejection_plan(seq: &Sequence) -> Option<CudaSpeculativeSamplingPlan> {
-    if seq.return_logprobs()
+    if crate::sampler::keyed_sampling_enabled()
+        || seq.return_logprobs()
         || seq.sampling_logprob_required()
         || !stochastic_verification_allowed_for_sequence(seq)
     {
@@ -1283,11 +1284,19 @@ async fn finish_verified_step_stochastic<P: Pipeline>(
         } else {
             (p_i / q_i).min(1.0)
         };
-        let draw = match fallback_uniforms {
-            Some(uniforms) => uniforms.accept[idx],
-            None => {
-                let mut rng = rng.lock().expect("could not lock rng mutex");
-                rng.random::<f32>()
+        let draw = if crate::sampler::keyed_sampling_enabled() {
+            seq.keyed_sampling_key.uniform(
+                mistralrs_keyed_rng::Purpose::Acceptance,
+                u32::try_from(seq.generated_len()).map_err(candle_core::Error::msg)?,
+                0,
+            )
+        } else {
+            match fallback_uniforms {
+                Some(uniforms) => uniforms.accept[idx],
+                None => {
+                    let mut rng = rng.lock().expect("could not lock rng mutex");
+                    rng.random::<f32>()
+                }
             }
         };
 
@@ -1318,20 +1327,34 @@ async fn finish_verified_step_stochastic<P: Pipeline>(
         if normalize_probs(&mut adjusted_probs).is_err() {
             adjusted_probs = target_probs.sampling;
         }
-        let sampled = match fallback_uniforms {
-            Some(uniforms) => sample_from_probs_with_uniform(
+        let sampled = if crate::sampler::keyed_sampling_enabled() {
+            sample_from_probs_with_uniform(
                 &sampler,
                 &adjusted_probs,
                 &target_probs.reporting,
                 return_logprobs,
-                uniforms.sample,
-            )?,
-            None => sampler.sample_from_probs(
-                &adjusted_probs,
-                &target_probs.reporting,
-                return_logprobs,
-                rng.clone(),
-            )?,
+                seq.keyed_sampling_key.uniform(
+                    mistralrs_keyed_rng::Purpose::Correction,
+                    u32::try_from(seq.generated_len()).map_err(candle_core::Error::msg)?,
+                    0,
+                ),
+            )?
+        } else {
+            match fallback_uniforms {
+                Some(uniforms) => sample_from_probs_with_uniform(
+                    &sampler,
+                    &adjusted_probs,
+                    &target_probs.reporting,
+                    return_logprobs,
+                    uniforms.sample,
+                )?,
+                None => sampler.sample_from_probs(
+                    &adjusted_probs,
+                    &target_probs.reporting,
+                    return_logprobs,
+                    rng.clone(),
+                )?,
+            }
         };
         let sampled_token = sampled.token;
         let keep_len = base_len + 1 + accepted;
@@ -1360,20 +1383,34 @@ async fn finish_verified_step_stochastic<P: Pipeline>(
         seq.get_toks(),
         seq.prompt_tokens(),
     )?;
-    let continuation = match fallback_uniforms {
-        Some(uniforms) => sample_from_probs_with_uniform(
+    let continuation = if crate::sampler::keyed_sampling_enabled() {
+        sample_from_probs_with_uniform(
             &sampler,
             &target_probs.sampling,
             &target_probs.reporting,
             return_logprobs,
-            uniforms.sample,
-        )?,
-        None => sampler.sample_from_probs(
-            &target_probs.sampling,
-            &target_probs.reporting,
-            return_logprobs,
-            rng,
-        )?,
+            seq.keyed_sampling_key.uniform(
+                mistralrs_keyed_rng::Purpose::Generation,
+                u32::try_from(seq.generated_len()).map_err(candle_core::Error::msg)?,
+                0,
+            ),
+        )?
+    } else {
+        match fallback_uniforms {
+            Some(uniforms) => sample_from_probs_with_uniform(
+                &sampler,
+                &target_probs.sampling,
+                &target_probs.reporting,
+                return_logprobs,
+                uniforms.sample,
+            )?,
+            None => sampler.sample_from_probs(
+                &target_probs.sampling,
+                &target_probs.reporting,
+                return_logprobs,
+                rng,
+            )?,
+        }
     };
     let continuation_token = continuation.token;
     finish_or_add_toks_to_seq(pipeline, prefix_cacher, seq, continuation, eos_tok, false).await?;

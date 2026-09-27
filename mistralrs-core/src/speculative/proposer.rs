@@ -470,15 +470,32 @@ pub fn sample_draft_rows(
     for (row, seq) in sequences.iter().enumerate() {
         let row_logits = logits.get(row)?.to_dtype(candle_core::DType::F32)?;
         let sequence_rng = seq.sampling_rng(rng);
-        let sampled = seq.sampler().sample(
-            row_logits,
-            &contexts[row],
-            seq.prompt_tokens(),
-            false,
-            sequence_rng,
-            false,
-            batch > 1,
-        )?;
+        let sampled = if crate::sampler::keyed_sampling_enabled() {
+            let position = u32::try_from(contexts[row].len() - seq.prompt_tokens())
+                .map_err(candle_core::Error::msg)?;
+            let uniform =
+                seq.keyed_sampling_key
+                    .uniform(mistralrs_keyed_rng::Purpose::Draft, position, 0);
+            seq.sampler().sample_keyed_cpu(
+                row_logits,
+                crate::sampler::KeyedSampleContext {
+                    tokens: &contexts[row],
+                    prompt_len: seq.prompt_tokens(),
+                    return_logprobs: false,
+                    uniform,
+                },
+            )?
+        } else {
+            seq.sampler().sample(
+                row_logits,
+                &contexts[row],
+                seq.prompt_tokens(),
+                false,
+                sequence_rng,
+                false,
+                batch > 1,
+            )?
+        };
         contexts[row].push(sampled.token);
         tokens.push(sampled.token);
     }

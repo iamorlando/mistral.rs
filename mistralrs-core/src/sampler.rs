@@ -19,6 +19,9 @@ static DRY_SEQUENCE_BREAKERS: LazyLock<Vec<String>> =
     LazyLock::new(|| ["\n", ":", "\"", "*"].map(String::from).to_vec());
 const SUPPRESS_TOKEN_LOGIT_BIAS: f32 = -1.0e9;
 
+mod keyed;
+pub(crate) use keyed::{keyed_sampling_enabled, KeyedSampleContext};
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 /// Optional generation defaults parsed from a model's `generation_config.json`.
 ///

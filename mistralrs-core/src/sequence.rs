@@ -757,6 +757,11 @@ pub struct Sequence {
     timestamp: u128,
     sampler: Arc<Sampler>,
     sampling_rng: Option<Arc<std::sync::Mutex<Isaac64Rng>>>,
+    pub(crate) keyed_sampling_key: mistralrs_keyed_rng::SequenceKey,
+    #[cfg(feature = "metal")]
+    pub(crate) keyed_history: Option<mistralrs_keyed_rng::metal::DeviceHistory>,
+    #[cfg(feature = "metal")]
+    pub(crate) pending_keyed_selection: Option<mistralrs_keyed_rng::metal::Selection>,
     stop_tokens: Vec<u32>,
     stop_strings: Vec<String>,
     ignore_eos: bool,
@@ -920,6 +925,13 @@ impl Sequence {
             sampler: sampler.into(),
             sampling_rng: sampling_seed
                 .map(|seed| Arc::new(std::sync::Mutex::new(Isaac64Rng::seed_from_u64(seed)))),
+            keyed_sampling_key: mistralrs_keyed_rng::SequenceKey::new(
+                sampling_seed.unwrap_or_else(rand::random),
+            ),
+            #[cfg(feature = "metal")]
+            keyed_history: None,
+            #[cfg(feature = "metal")]
+            pending_keyed_selection: None,
             stop_tokens,
             stop_strings,
             ignore_eos,
@@ -1102,6 +1114,10 @@ impl Sequence {
         if let Some(prefill) = &self.prefill_prompt_toks {
             return &prefill.tokens;
         }
+        &self.tokens
+    }
+
+    pub(crate) fn committed_toks(&self) -> &[u32] {
         &self.tokens
     }
 
@@ -1335,6 +1351,12 @@ impl Sequence {
     ) {
         self.tokens.clone_from(&toks);
         self.prompt_len = self.tokens.len();
+        self.keyed_sampling_key = self.keyed_sampling_key.next_prompt();
+        #[cfg(feature = "metal")]
+        {
+            self.keyed_history = None;
+            self.pending_keyed_selection = None;
+        }
         self.clear_staged_speculative_tokens();
         self.num_computed_tokens = 0;
         self.bump_block_hash_revision();

@@ -3,6 +3,7 @@ members = [
     "mistralrs-server-core",
     "mistralrs-cli",
     "mistralrs-core",
+    "mistralrs-keyed-rng",
     "mistralrs-pyo3",
     "mistralrs",
     "mistralrs-vision",

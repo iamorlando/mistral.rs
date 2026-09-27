@@ -1718,13 +1718,32 @@ pub mod text_models_inputs_processor {
         } else {
             Vec::new()
         };
-        let input = completion_input_tensor(
-            input_tokens,
-            input_seqs.len(),
-            host_input_width.unwrap_or_default(),
-            &staged_device_rows,
-            device,
-        )?;
+        #[cfg(feature = "metal")]
+        let resident = if decode_window == 1 && !use_staged_speculative {
+            input_seqs
+                .iter()
+                .map(|seq| {
+                    seq.keyed_history
+                        .as_ref()
+                        .and_then(|history| history.next_input(seq.get_toks().len(), device))
+                })
+                .collect::<Option<Vec<_>>>()
+        } else {
+            None
+        };
+        #[cfg(not(feature = "metal"))]
+        let resident: Option<Vec<&Tensor>> = None;
+        let input = if let Some(rows) = resident {
+            Tensor::cat(&rows, 0)?.to_dtype(T::DTYPE)?
+        } else {
+            completion_input_tensor(
+                input_tokens,
+                input_seqs.len(),
+                host_input_width.unwrap_or_default(),
+                &staged_device_rows,
+                device,
+            )?
+        };
         if input.dims() != [input_seqs.len(), input_width.unwrap_or_default()] {
             anyhow::bail!("completion input tensor shape changed while staging proposals");
         }

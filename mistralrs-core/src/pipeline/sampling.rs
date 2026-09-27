@@ -779,7 +779,13 @@ impl CausalLogitsBatch {
         }
     }
 
-    fn into_cpu_rows(self) -> Result<Vec<Tensor>> {
+    fn into_sampling_rows(self) -> Result<Vec<Tensor>> {
+        if crate::sampler::keyed_sampling_enabled() {
+            return match self {
+                Self::PerSequence(logits) => Ok(logits),
+                Self::Batched(logits) => (0..logits.dim(0)?).map(|idx| logits.i(idx)).collect(),
+            };
+        }
         match self {
             Self::PerSequence(logits) => coalesce_batch_logits_to_cpu(logits),
             Self::Batched(logits) => {
@@ -808,10 +814,12 @@ async fn sample_and_add_toks_inner(
     let max_model_len = metadata.max_seq_len;
     let eos_toks = metadata.eos_tok.clone();
 
-    let sampled_vec = match try_sample_batch_cuda(&logits, seqs, &rng)? {
+    let metal =
+        try_sample_batch_keyed_metal(&logits, seqs, max_model_len, &eos_toks, disable_eos_stop)?;
+    let sampled_vec = match metal.or(try_sample_batch_cuda(&logits, seqs, &rng)?) {
         Some(sampled) => sampled,
         None => {
-            let logits_seq = logits.into_cpu_rows()?;
+            let logits_seq = logits.into_sampling_rows()?;
             let sampling_futures: Vec<_> = std::iter::zip(logits_seq, seqs.iter_mut())
                 .map(|(logits_per_seq, seq)| {
                     let return_logprobs = seq.return_logprobs();
@@ -844,6 +852,77 @@ async fn sample_and_add_toks_inner(
     }
 
     Ok(())
+}
+
+#[cfg(feature = "metal")]
+fn try_sample_batch_keyed_metal(
+    logits: &CausalLogitsBatch,
+    seqs: &mut [&mut Sequence],
+    max_model_len: usize,
+    eos: &[u32],
+    disable_eos_stop: bool,
+) -> Result<Option<Vec<Result<Logprobs>>>> {
+    if !crate::sampler::keyed_sampling_enabled()
+        || seqs.is_empty()
+        || seqs.iter().any(|seq| {
+            !matches!(seq.recognizer, SequenceRecognizer::None)
+                || seq.tool_call_state.is_some()
+                || seq.return_logprobs()
+                || !seq.sampler().can_sample_keyed_metal()
+        })
+    {
+        return Ok(None);
+    }
+    let rows = match logits {
+        CausalLogitsBatch::PerSequence(rows) => rows.clone(),
+        CausalLogitsBatch::Batched(logits) => (0..logits.dim(0)?)
+            .map(|idx| logits.i(idx))
+            .collect::<Result<Vec<_>>>()?,
+    };
+    if rows
+        .iter()
+        .any(|row| !row.device().is_metal() || !row.device().same_device(rows[0].device()))
+    {
+        return Ok(None);
+    }
+    let selections = seqs
+        .iter_mut()
+        .zip(rows)
+        .map(|(seq, logits)| {
+            let logits = logits.squeeze(0)?.squeeze(0)?.to_dtype(DType::F32)?;
+            seq.submit_keyed_metal(&logits, 0, max_model_len)
+                .map(|(selection, _)| selection)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let results = mistralrs_keyed_rng::metal::Selection::readback_batch(
+        &selections.iter().collect::<Vec<_>>(),
+    )?;
+    let mut sampled = Vec::with_capacity(seqs.len());
+    for ((seq, selection), result) in seqs.iter_mut().zip(selections).zip(results) {
+        sampled.push(result.and_then(|(token, logprob)| {
+            seq.pending_keyed_selection = Some(selection);
+            let eos = seq.effective_eos_tokens(eos, disable_eos_stop);
+            seq.commit_keyed_selection(eos)?;
+            Ok(Logprobs {
+                token,
+                logprob,
+                bytes: None,
+                top_logprobs: None,
+            })
+        }));
+    }
+    Ok(Some(sampled))
+}
+
+#[cfg(not(feature = "metal"))]
+fn try_sample_batch_keyed_metal(
+    _logits: &CausalLogitsBatch,
+    _seqs: &mut [&mut Sequence],
+    _max_model_len: usize,
+    _eos: &[u32],
+    _disable_eos_stop: bool,
+) -> Result<Option<Vec<Result<Logprobs>>>> {
+    Ok(None)
 }
 
 pub(crate) fn can_sample_batch_cuda(seqs: &[&mut Sequence]) -> bool {
@@ -948,6 +1027,9 @@ fn prepare_cuda_token_batch(
     seqs: &[&mut Sequence],
     rng: &Arc<std::sync::Mutex<Isaac64Rng>>,
 ) -> Option<CudaTokenBatchPlan> {
+    if crate::sampler::keyed_sampling_enabled() {
+        return None;
+    }
     let mut sampler = None;
     let mut needs_topk = false;
     for seq in seqs {
@@ -1245,6 +1327,9 @@ fn try_sample_batch_cuda(
     seqs: &[&mut Sequence],
     rng: &Arc<std::sync::Mutex<Isaac64Rng>>,
 ) -> Result<Option<Vec<Result<Logprobs>>>> {
+    if crate::sampler::keyed_sampling_enabled() {
+        return Ok(None);
+    }
     let logits = match logits {
         CausalLogitsBatch::PerSequence(logits) => {
             if logits.is_empty()
@@ -1411,7 +1496,10 @@ pub async fn sample_sequence(
     let prompt_len = seq.prompt_tokens();
     let rng_clone = rng.clone();
     let logits_clone = logits.clone();
-    let first_lobprobs_response = if use_async_pool {
+    let keyed = crate::sampler::keyed_sampling_enabled() && !sample_speculative;
+    let first_lobprobs_response = if keyed {
+        seq.sample_keyed_attempt(logits_clone, return_logprobs, 0, max_model_len)?
+    } else if use_async_pool {
         tokio_rayon::spawn(move || {
             sampler.sample(
                 logits_clone,
@@ -1491,7 +1579,9 @@ pub async fn sample_sequence(
             let ctx_clone = seq.get_toks().to_vec();
             let rng_clone = rng.clone();
             let sampler = seq.sampler();
-            if use_async_pool {
+            if keyed {
+                seq.sample_keyed_attempt(new_logits, return_logprobs, 1, max_model_len)?
+            } else if use_async_pool {
                 tokio_rayon::spawn(move || {
                     sampler.sample(
                         new_logits,
@@ -1543,6 +1633,10 @@ pub async fn sample_sequence(
         }
     }
 
+    #[cfg(feature = "metal")]
+    if keyed {
+        seq.commit_keyed_selection(eos_tok)?;
+    }
     Ok(second_logprobs_response)
 }
 
@@ -1676,6 +1770,107 @@ mod tests {
 
     fn stochastic_test_sequence(seed: u64) -> Sequence {
         sampled_test_sequence(seed, -1, 1.0)
+    }
+
+    #[cfg(feature = "metal")]
+    #[test]
+    fn keyed_metal_retry_commits_once_and_replays_after_rebatching() -> Result<()> {
+        let device = candle_core::Device::new_metal(0)?;
+        let logits = Tensor::new(&[0.1f32, 0.2, 0.3, 0.4], &device)?;
+        let mut a = sampled_test_sequence(42, 3, 0.9);
+        let mut b = sampled_test_sequence(43, 3, 0.9);
+        a.set_prefill_toks(vec![3]);
+        let first = a.sample_keyed_attempt(logits.clone(), false, 0, 1024)?;
+        let _ = b.sample_keyed_attempt(logits.clone(), false, 0, 1024)?;
+        let replay = a.sample_keyed_attempt(logits.clone(), false, 0, 1024)?;
+        assert_eq!(first.token, replay.token);
+        let diagnosed = a.sample_keyed_attempt(logits.clone(), true, 0, 1024)?;
+        assert_eq!(first.token, diagnosed.token);
+        assert_eq!(
+            a.keyed_history.as_ref().unwrap().state().to_vec1::<u32>()?,
+            vec![3, 0, 1]
+        );
+        let accepted = a.sample_keyed_attempt(logits, false, 1, 1024)?;
+        a.commit_keyed_selection(None)?;
+        a.add_token(accepted.clone(), vec![], None);
+        let history = a.keyed_history.as_ref().unwrap();
+        assert_eq!(history.state().to_vec1::<u32>()?, vec![4, 1, 1]);
+        assert_eq!(
+            history
+                .next_input(a.get_toks().len(), &device)
+                .unwrap()
+                .to_vec2::<u32>()?,
+            vec![vec![accepted.token]]
+        );
+        assert_eq!(history.tokens()?.to_vec1::<u32>()?, a.get_toks());
+        let tokens = a.get_toks().to_vec();
+        let inputs =
+            crate::pipeline::inputs_processor::text_models_inputs_processor::get_completion_input(
+                vec![tokens.as_slice()],
+                &[&mut a],
+                &device,
+                false,
+                None,
+                false,
+                None,
+                None,
+                None,
+            )
+            .map_err(candle_core::Error::msg)?;
+        assert_eq!(
+            inputs.inputs.input.to_vec2::<u32>()?,
+            vec![vec![accepted.token]]
+        );
+        let prior_key = a
+            .keyed_sampling_key
+            .words(mistralrs_keyed_rng::Purpose::Generation);
+        a.set_toks_and_reallocate(vec![0, 0, 0, 0], None);
+        assert!(a.keyed_history.is_none());
+        assert!(a.pending_keyed_selection.is_none());
+        assert_ne!(
+            prior_key,
+            a.keyed_sampling_key
+                .words(mistralrs_keyed_rng::Purpose::Generation)
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "metal")]
+    #[tokio::test]
+    async fn keyed_metal_serving_batch_preserves_device_rows() -> Result<()> {
+        if !crate::sampler::keyed_sampling_enabled() {
+            return Ok(());
+        }
+        let device = candle_core::Device::new_metal(0)?;
+        let logits = Tensor::new(&[0.1f32, 0.2, 0.3, 0.4], &device)?.reshape((1, 1, 4))?;
+        let mut a = sampled_test_sequence(42, 3, 0.9);
+        let mut b = sampled_test_sequence(43, 3, 0.9);
+        let expected_a = a
+            .sample_keyed_attempt(logits.flatten_all()?, false, 0, 1024)?
+            .token;
+        let expected_b = b
+            .sample_keyed_attempt(logits.flatten_all()?, false, 0, 1024)?
+            .token;
+        let rows = CausalLogitsBatch::PerSequence(vec![logits.clone(), logits]);
+        let result =
+            try_sample_batch_keyed_metal(&rows, &mut [&mut b, &mut a], 1024, &[], false)?.unwrap();
+        assert_eq!(result[0].as_ref().unwrap().token, expected_b);
+        assert_eq!(result[1].as_ref().unwrap().token, expected_a);
+        for seq in [&a, &b] {
+            assert_eq!(
+                seq.keyed_history
+                    .as_ref()
+                    .unwrap()
+                    .state()
+                    .to_vec1::<u32>()?,
+                vec![4, 1, 1]
+            );
+        }
+        assert!(rows
+            .into_sampling_rows()?
+            .iter()
+            .all(|row| row.device().is_metal()));
+        Ok(())
     }
 
     async fn sample_test_token(

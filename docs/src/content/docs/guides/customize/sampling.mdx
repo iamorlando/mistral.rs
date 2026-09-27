@@ -56,6 +56,28 @@ DRY penalizes continuing token sequences that would reproduce spans from the pre
 - `dry_allowed_length`: match length tolerated before the penalty applies. Default `2`.
 - `dry_sequence_breakers`: strings that reset matching. Default `["\n", ":", "\"", "*"]`.
 
+## Versioned keyed RNG
+
+Set `MISTRALRS_SAMPLING_RNG=keyed-threefry2x32-v1` before starting the process to
+opt into KeyedRngs Threefry2x32 sampling. Isaac64 remains the default. Switching
+modes intentionally changes seeded output; record the mode alongside the request
+`seed` when reproducing generation.
+
+Each sequence owns a seed. Draws depend on generated position, retry number, and
+purpose, so batch reordering does not advance another sequence's stream. Grammar
+retries use a new draw. Speculative drafting, acceptance, correction, and diagnostics
+have separate streams. Unseeded requests receive entropy once at admission.
+
+On Metal, eligible sampling keeps candidate probabilities, selected token tensors,
+history and penalty counts on device. A compact selected-token record is read for
+normal text and stop handling; text decode can reuse the selected device token as
+its next input. Full logprobs read additional reporting data after device selection.
+CPU grammars, custom processors, DRY, and speculative verification retain compatible
+host paths. RNG bit parity does not guarantee
+identical complete CPU/Metal generation because model floating-point results can
+differ. The full adapter contract and test commands are in the repository's
+`mistralrs-keyed-rng/README.md`.
+
 ## Stopping
 
 Generation stops at the model's EOS tokens, a request-supplied `stop` string or token, or the token
