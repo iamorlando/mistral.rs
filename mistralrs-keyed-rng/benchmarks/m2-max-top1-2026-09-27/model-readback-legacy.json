@@ -1,0 +1,25 @@
+{
+  "batch": 1,
+  "steps": 8,
+  "readbacks": {
+    "model_legacy": 8
+  },
+  "kinds": {
+    "model_legacy": {
+      "candle_copy": 8,
+      "shared_records": 0
+    }
+  },
+  "tensor_elements": {
+    "model_legacy": [
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4
+    ]
+  }
+}

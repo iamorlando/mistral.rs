@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Count tensor copies and shared-record reads under LLDB, outside timing runs."""
+"""Check tensor copy sizes and shared-record reads under LLDB, outside timing runs."""
 
 import argparse
 import json
@@ -35,9 +35,9 @@ def main():
     commands = f"""target create {json.dumps(str(args.binary.resolve()))}
 settings set target.env-vars {environment}
 breakpoint set --file {json.dumps(str(source.resolve()))} --line {line}
-breakpoint command add 1
-script print("CANDLE_METAL_READBACK", flush=True)
-continue
+breakpoint command add -s python 1
+print("CANDLE_METAL_READBACK elements=" + str(frame.FindVariable("self").Dereference().GetChildMemberWithName("count").GetValueAsUnsigned()), flush=True)
+return False
 DONE
 breakpoint set --file {json.dumps(str(keyed_source))} --line {keyed_line}
 breakpoint command add 2
@@ -65,12 +65,14 @@ quit
         raise SystemExit(f"LLDB audit failed; inspect {args.output}")
     counts = {}
     kinds = {}
+    tensor_elements = {}
     active = None
     for line in result.stdout.splitlines():
         if args.model and "Iteration 1/1..." in line:
             active = "model_legacy" if args.legacy else "model_keyed"
             counts[active] = 0
             kinds[active] = {"candle_copy": 0, "shared_records": 0}
+            tensor_elements[active] = []
         elif args.model and "Benchmark Results" in line:
             active = None
         begin = re.search(r"AUDIT_BEGIN mode=(\w+)", line)
@@ -78,17 +80,21 @@ quit
             active = begin.group(1)
             counts[active] = 0
             kinds[active] = {"candle_copy": 0, "shared_records": 0}
+            tensor_elements[active] = []
         elif "AUDIT_END" in line:
             active = None
-        elif active and line.strip() in ("CANDLE_METAL_READBACK", "KEYED_SHARED_READBACK"):
+        elif active and (line.startswith("CANDLE_METAL_READBACK elements=") or line.strip() == "KEYED_SHARED_READBACK"):
             counts[active] += 1
-            kind = "candle_copy" if line.strip() == "CANDLE_METAL_READBACK" else "shared_records"
+            kind = "candle_copy" if line.startswith("CANDLE_METAL_READBACK") else "shared_records"
             kinds[active][kind] += 1
+            if kind == "candle_copy":
+                tensor_elements[active].append(int(line.split("elements=")[1]))
     expected = {
         "cpu_legacy": 0,
         "cpu_keyed": 0,
         "readback_cpu_legacy": 4,
         "readback_cpu_keyed": 4,
+        "metal_legacy": 4,
         "metal_compact": 4,
         "metal_queued": 0,
     }
@@ -103,8 +109,26 @@ quit
                           "shared_records": count if shared else 0}
         if kinds[mode] != expected_kinds:
             raise SystemExit(f"Unexpected readback type for {mode}: {kinds[mode]}")
+        if kinds[mode]["candle_copy"]:
+            if args.model:
+                expected_elements = 4
+            elif mode == "metal_legacy" and args.batch == 1:
+                expected_elements = 82
+            else:
+                expected_elements = 32768 * args.batch
+            if tensor_elements[mode] != [expected_elements] * count:
+                raise SystemExit(f"Unexpected tensor readback size for {mode}: {tensor_elements[mode]}")
     args.output.with_suffix(".json").write_text(
-        json.dumps({"batch": args.batch, "steps": 8 if args.model else 4, "readbacks": counts, "kinds": kinds}, indent=2) + "\n"
+        json.dumps(
+            {
+                "batch": args.batch,
+                "steps": 8 if args.model else 4,
+                "readbacks": counts,
+                "kinds": kinds,
+                "tensor_elements": tensor_elements,
+            },
+            indent=2,
+        ) + "\n"
     )
 
 

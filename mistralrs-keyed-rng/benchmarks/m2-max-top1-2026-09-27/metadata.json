@@ -1,0 +1,87 @@
+{
+  "date": "2026-09-27",
+  "candle_revision": "66a8cf184a5a519671454066b1b9efd446ec9f5c",
+  "keyed_rngs_revision": "9269c77b9bd0095688f93fa6d9e97624211c883b",
+  "cpu": "Apple M2 Max",
+  "gpu": "Apple M2 Max",
+  "logical_cpu_count": 12,
+  "memory_bytes": 68719476736,
+  "macos_version": "27.0",
+  "macos_build": "26A428",
+  "rustc": "1.96.0 (ac68faa20 2026-05-25)",
+  "cargo_profile": "test and dev, opt-level=3, debuginfo, debug assertions; not release",
+  "rustflags": "-C target-cpu=native, from .cargo/config.toml",
+  "features": [
+    "metal",
+    "accelerate"
+  ],
+  "dtype": "f32",
+  "rayon_num_threads_env": null,
+  "candle_metal_compute_per_buffer_env": null,
+  "warmup_steps_per_mode": 8,
+  "timed_steps_per_repeat": 32,
+  "repetitions": 5,
+  "mode_order": "rotates by one per repetition",
+  "prompt_length": 128,
+  "seed": 42,
+  "sequence_seed": "42 + batch row",
+  "temperature": 0.8,
+  "vocabularies": [
+    32768,
+    131072
+  ],
+  "batches": [
+    1,
+    8
+  ],
+  "filters": [
+    "greedy",
+    "top1",
+    "categorical",
+    "topk40_p90"
+  ],
+  "penalties": false,
+  "full_logprobs": false,
+  "model_forward": false,
+  "initial_uploads_timed": false,
+  "gpu_completion_timed": true,
+  "post_run_validation_timed": false,
+  "source_base": "a76966891ffbec92d43c2b63d4cab53af6f00350",
+  "source_sha256": {
+    "mistralrs-keyed-rng/src/metal.rs": "1f81270ca53780361eb5f4c28f924a207bfcd8faccc9f64f265e11735768c4c8",
+    "mistralrs-keyed-rng/src/selection.metal": "194ded252bd225f5356452e8cce0b062d5dda0cba00566558362efa9dd8afed4",
+    "mistralrs-keyed-rng/src/topk.metal": "5054fd80e03251ef840f520105466f7f7e4b2dc2b99c5c718f0bc40a805e49da",
+    "mistralrs-keyed-rng/src/sampling.metal": "5cc58edb261673069113ff845aa9f61a9e5ad7e32d13f607ddb968ff649e1706",
+    "mistralrs-core/src/sampler/keyed.rs": "3158592d636e52b0b4fcf13c7ebf6dd8330ed3250d4dd7684a082ced25a69cbc",
+    "mistralrs-core/src/sampler/keyed_bench.rs": "e8426dd8e4362f67fc960775e5808555f5491f074521a0fc8911881bda0f927c",
+    "mistralrs-core/src/pipeline/sampling.rs": "1906f7e53a22a29f8829dca76405cfacb9f86738f75e17afab8623f5aa4f3587",
+    "scripts/audit_keyed_readbacks.py": "4f9caa0c6efef5f178bf43c63ab6fc4551c8ebd1fd19faaaa2d7888ad06fd385",
+    "scripts/benchmark_keyed_model.py": "456b3d6a4c21c200d30404225098a897125d511ff241359d7de19404969e60aa"
+  },
+  "model": {
+    "id": "HuggingFaceTB/SmolLM2-135M-Instruct",
+    "revision": "12fd25f77366fa6b3b4b768ec3050bf629380bac",
+    "model_safetensors_sha256": "5af571cbf074e6d21a03528d2330792e532ca608f24ac70a143f6b369968ab8c",
+    "dtype": "f32",
+    "layers": 30,
+    "vocabulary": 49152,
+    "depths": [
+      128,
+      512
+    ],
+    "generated_tokens": 128,
+    "warmups": 2,
+    "repetitions": 5,
+    "greedy": true,
+    "paged_attention": false,
+    "rounds": 3,
+    "mode_order": "metal_legacy, metal_keyed_before, metal_keyed; rotated each round",
+    "sampler_top_k": 1,
+    "sampler_effective_temperature": 1.0,
+    "before_source": "a76966891ffbec92d43c2b63d4cab53af6f00350"
+  },
+  "binary_sha256": {
+    "current": "199b64dedccb10d9ee2a243bba30eabf6f2cb94fec370dbd65622d7b498c6e37",
+    "before": "20d733484c79f868279d5b95de2790baef8d1984c331c1824fd0d2ffae897a5e"
+  }
+}

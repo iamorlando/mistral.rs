@@ -9,7 +9,7 @@ cargo test -p mistralrs-core --features metal benchmark_keyed_sampling -- --igno
 
 The workspace test profile uses `opt-level = 3`, debug information and debug
 assertions. CPU and Metal use the same binary. The default matrix uses vocabularies
-32,768 and 131,072, batches 1 and 8, and greedy, categorical, and top-k 40 / top-p
+32,768 and 131,072, batches 1 and 8, and greedy, top-k 1, categorical, and top-k 40 / top-p
 0.9 sampling. Sampling temperature is 0.8. Penalties, bias, grammar, DRY and full
 logprobs are disabled. Each mode gets 8 warmup steps, then five repetitions of 32
 steps. Mode order rotates between repetitions. CPU batch rows use Rayon.
@@ -29,6 +29,7 @@ events and history, without a model forward pass.
 | `cpu_keyed` | Keyed CPU sampler on CPU-resident logits |
 | `readback_cpu_legacy` | One full logits-batch readback per step, then existing CPU sampler |
 | `readback_cpu_keyed` | One full logits-batch readback per step, then keyed CPU sampler |
+| `metal_legacy` | Existing serving path: eligible single-sequence top-k runs GPU reduction and reads compact candidates; other cases use the existing CPU fallback |
 | `metal_compact` | Production Metal sampler, one compact batch readback per step, device history commit |
 | `metal_queued` | Same Metal sampler/history operations queued across steps, no intermediate readback |
 
@@ -39,6 +40,13 @@ these numbers measures model generation, tokenization, streaming, complete serve
 throughput, or CPU-versus-GPU model inference. CPU modes do not upload the next
 model input, and Metal modes do not construct a model forward input. No model
 weights are needed.
+
+Use `metal_legacy` for the comparison against the existing Metal implementation.
+`readback_cpu_legacy` is a forced CPU-sampling baseline and does not represent
+eligible single-sequence top-k serving. The original Metal path already reduces
+those candidates on the GPU. The audit now verifies both readback counts and
+tensor element counts so a compact candidate read cannot be mistaken for a full
+logits read.
 
 The harness checks token validity, committed device state, exact compact/queued
 Metal agreement, and exact CPU agreement with/without logits readback. It reports
@@ -105,3 +113,10 @@ actual inference engine. Add `--legacy` for the default sampler positive control
 It counts both kinds of host read during the complete request, including model
 execution. It does not interpret command submissions or metadata uploads as
 tensor readbacks.
+
+Use `--rounds 3 --modes metal_legacy metal_keyed` with the model benchmark to
+rotate execution order between rounds. An optional `--baseline-binary` supplies
+the `metal_keyed_before` mode for a saved prior executable. Binary hashes and
+every round's command/results are recorded. The
+[corrected top-1 report](m2-max-top1-2026-09-27/README.md) supersedes the earlier
+model-readback interpretation and includes the existing Metal sampling baseline.

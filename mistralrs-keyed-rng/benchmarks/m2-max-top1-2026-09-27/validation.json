@@ -1,0 +1,34 @@
+{
+  "cargo_check_metal_accelerate": "passed: cargo check -p mistralrs-cli -p mistralrs-keyed-rng --features metal,accelerate",
+  "cargo_check_cpu": "passed: cargo check -p mistralrs-cli -p mistralrs-keyed-rng",
+  "cargo_fmt": "passed: cargo fmt --all -- --check",
+  "cargo_clippy": "passed: cargo clippy -p mistralrs-keyed-rng --features metal --tests -- -D warnings",
+  "python_compile": "passed for both benchmark and audit scripts",
+  "keyed_cpu_tests": {
+    "passed": 2
+  },
+  "keyed_metal_tests": {
+    "passed": 10,
+    "ignored_manual_benchmark": 1
+  },
+  "core_keyed_metal_tests": {
+    "passed": 4,
+    "environment": "MISTRALRS_SAMPLING_RNG=keyed-threefry2x32-v1"
+  },
+  "sampling_matrix": {
+    "passed": true,
+    "observations": 560,
+    "groups": 112
+  },
+  "model_runs": {
+    "passed": 9,
+    "depths_per_run": 2,
+    "measured_iterations_per_depth": 5
+  },
+  "readback_audits": {
+    "batch_1": "passed",
+    "batch_8": "passed",
+    "model_keyed": "passed",
+    "model_legacy": "passed"
+  }
+}

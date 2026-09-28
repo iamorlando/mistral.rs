@@ -403,14 +403,16 @@ kernel void logits_finish(device const float* weights [[buffer(0)]], device cons
         tokens[0] = INVALID_TOKEN;
         total = 0;
         for (uint i = 0; i < count; ++i) total += tiles[i].mass * exp(tiles[i].maximum - maximum);
-        float draw = uniform_from_uint(threefry2x32(state[1], shape[4], shape[2], shape[3]).x);
-        float target = draw * total;
-        float before = 0;
-        for (uint i = 0; i < count; ++i) {
-            float mass = tiles[i].mass * exp(tiles[i].maximum - maximum);
-            if (mass > 0) { chosen_tile = i; conditional = (target - before) / mass; }
-            if (before + mass > target) break;
-            before += mass;
+        if (shape[1] == 0) {
+            float draw = uniform_from_uint(threefry2x32(state[1], shape[4], shape[2], shape[3]).x);
+            float target = draw * total;
+            float before = 0;
+            for (uint i = 0; i < count; ++i) {
+                float mass = tiles[i].mass * exp(tiles[i].maximum - maximum);
+                if (mass > 0) { chosen_tile = i; conditional = (target - before) / mass; }
+                if (before + mass > target) break;
+                before += mass;
+            }
         }
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);

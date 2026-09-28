@@ -1804,6 +1804,39 @@ mod tests {
 
     #[cfg(feature = "metal")]
     #[test]
+    fn keyed_metal_top_one_preserves_full_distribution_logprob() -> Result<()> {
+        let device = candle_core::Device::new_metal(0)?;
+        let values = [-1.0f32, 1.0, 4.0, 4.0];
+        let logits = Tensor::new(&values, &device)?;
+        let expected =
+            candle_nn::ops::softmax_last_dim(&Tensor::new(&values, &candle_core::Device::Cpu)?)?
+                .to_vec1::<f32>()?[2]
+                .ln();
+        for top_p in [0.1, 0.9, 1.0] {
+            let mut a = sampled_test_sequence(42, 1, top_p);
+            let mut b = sampled_test_sequence(43, 1, top_p);
+            for return_logprobs in [false, true] {
+                let sampled = a.sample_keyed_attempt(logits.clone(), return_logprobs, 0, 1024)?;
+                assert_eq!(sampled.token, 2);
+                assert!((sampled.logprob - expected).abs() < 1e-5);
+            }
+            if crate::sampler::keyed_sampling_enabled() {
+                let rows = CausalLogitsBatch::PerSequence(vec![logits.reshape((1, 1, 4))?; 2]);
+                let results =
+                    try_sample_batch_keyed_metal(&rows, &mut [&mut a, &mut b], 1024, &[], false)?
+                        .unwrap();
+                for result in results {
+                    let sampled = result?;
+                    assert_eq!(sampled.token, 2);
+                    assert!((sampled.logprob - expected).abs() < 1e-5);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "metal")]
+    #[test]
     fn keyed_metal_retry_commits_once_and_replays_after_rebatching() -> Result<()> {
         let device = candle_core::Device::new_metal(0)?;
         let logits = Tensor::new(&[0.1f32, 0.2, 0.3, 0.4], &device)?;

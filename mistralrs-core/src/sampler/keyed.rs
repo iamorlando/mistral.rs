@@ -48,7 +48,7 @@ impl Sampler {
             presence: self.presence_penalty.unwrap_or(0.0),
             repetition: self.repetition_penalty.unwrap_or(1.0),
             min_p: self.min_p as f32,
-            greedy: self.temperature.is_none(),
+            greedy: self.temperature.is_none() || self.top_k == 1,
         }
     }
 
@@ -58,7 +58,7 @@ impl Sampler {
             top_k: self.top_k.max(0) as usize,
             top_p: self.top_p as f32,
             min_p: self.min_p as f32,
-            greedy: self.temperature.is_none(),
+            greedy: self.temperature.is_none() || self.top_k == 1,
         }
     }
 
@@ -153,6 +153,7 @@ impl Sampler {
         use mistralrs_keyed_rng::metal::{select, Filter, LogitsSampling};
         let direct = self.logits_bias.is_empty()
             && (self.temperature.is_none()
+                || self.top_k == 1
                 || (self.top_k <= 0 && !(self.top_p > 0.0 && self.top_p < 1.0)));
         let direct = if direct {
             let selection = history.sample_logits(
@@ -165,7 +166,7 @@ impl Sampler {
                     presence: self.presence_penalty.unwrap_or(0.0),
                     repetition: self.repetition_penalty.unwrap_or(1.0),
                     min_p: self.min_p as f32,
-                    greedy: self.temperature.is_none(),
+                    greedy: self.temperature.is_none() || self.top_k == 1,
                 },
             )?;
             if !context.return_logprobs {

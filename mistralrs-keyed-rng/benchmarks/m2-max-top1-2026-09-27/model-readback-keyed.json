@@ -1,0 +1,16 @@
+{
+  "batch": 1,
+  "steps": 8,
+  "readbacks": {
+    "model_keyed": 8
+  },
+  "kinds": {
+    "model_keyed": {
+      "candle_copy": 0,
+      "shared_records": 8
+    }
+  },
+  "tensor_elements": {
+    "model_keyed": []
+  }
+}

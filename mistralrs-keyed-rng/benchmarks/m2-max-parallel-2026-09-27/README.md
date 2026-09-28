@@ -1,5 +1,15 @@
 # Parallel Metal sampling on Apple M2 Max
 
+Correction: the original explanation of the model readback was wrong. The
+existing Metal path already performs GPU top-k reduction for eligible requests.
+The CLI requests top-k 1 with effective temperature 1, so this model benchmark
+reads four packed f32 values (16 bytes), not the 49,152-element logits vector.
+The old audit counted calls without checking tensor sizes. The timings below
+remain the recorded measurements, but they compare against an existing GPU
+top-k path, and the matrix omitted that path as a separate baseline. The keyed
+implementation also failed to specialize top-k 1 and unnecessarily ran a full
+softmax and block sort. See the [corrected top-1 report](../m2-max-top1-2026-09-27/README.md).
+
 The severe slowdown in the earlier report was introduced by the original keyed
 selector, which scanned a vocabulary in one GPU thread per sequence. It was not
 evidence that Mistral's existing Metal model execution lacked parallelism.
@@ -69,8 +79,9 @@ logits across this matrix. It queues selection and feedback without intermediate
 host reads; the current serving scheduler does not queue whole model decode
 steps this way.
 
-`GPU + result read` includes the serving-style host boundary and should be
-compared with `Logits readback + CPU` for a model already on the GPU. At 128K
+`GPU + result read` includes the serving-style host boundary. Comparing it with
+`Logits readback + CPU` describes cases that use CPU sampling; it does not cover
+the existing eligible GPU top-k path omitted from this matrix. At 128K
 vocabulary it is 1.27-2.78x faster across these cases. At 32K the improvements are
 small, batch-eight greedy is approximately tied, and batch-eight top-k is about
 24% slower. GPU dispatch/synchronization and top-k costs still matter at these
@@ -88,7 +99,7 @@ sampler's wait before accessing shared result records. Debugger runs are separat
 from timing runs. Initialization, warmup and final diagnostic reads are excluded
 from the sampler counts.
 
-| Workload | Steps | Full tensor copies | Shared result reads |
+| Workload | Steps | Tensor copies | Shared result reads |
 | --- | ---: | ---: | ---: |
 | Sampler, full logits + CPU, batch 1 or 8 | 4 | 4 | 0 |
 | Sampler, compact GPU, batch 1 or 8 | 4 | 0 | 4 |
@@ -98,8 +109,8 @@ from the sampler counts.
 
 The model audit covers complete inference requests after warmup. It observes no
 Candle tensor readback during keyed model generation, and one 12-byte selected
-result record per token. Existing Metal copies a 49,152-element f32 logits row
-(196,608 bytes) per token. Shared memory eliminates a staging copy, **not the
+result record per token. Existing Metal copies four packed f32 values
+(16 bytes) per token in this model benchmark. Shared memory eliminates a staging copy, **not the
 host read or synchronization**. The host still consumes tokens for output,
 stop strings and scheduling. GPU history commits are queued before reporting,
 and the next text-model token input uses the selected device tensor.

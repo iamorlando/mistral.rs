@@ -14,11 +14,12 @@ const WARMUP_STEPS: usize = 8;
 const DEFAULT_STEPS: usize = 32;
 const DEFAULT_REPEATS: usize = 5;
 const SEED: u64 = 42;
-const MODES: [&str; 6] = [
+const MODES: [&str; 7] = [
     "cpu_legacy",
     "cpu_keyed",
     "readback_cpu_legacy",
     "readback_cpu_keyed",
+    "metal_legacy",
     "metal_compact",
     "metal_queued",
 ];
@@ -53,7 +54,11 @@ impl Case {
             None,
             None,
             None,
-            if filter == "topk40_p90" { 40 } else { -1 },
+            match filter {
+                "topk40_p90" => 40,
+                "top1" => 1,
+                _ => -1,
+            },
             if filter == "topk40_p90" { 0.9 } else { 1.0 },
             0.0,
             HashMap::new(),
@@ -101,7 +106,7 @@ impl Case {
         }
         let start = Instant::now();
         for position in 0..steps {
-            if mode.starts_with("metal_") {
+            if matches!(mode, "metal_compact" | "metal_queued") {
                 let selections = if self.batch > 1 {
                     let params = keys
                         .iter()
@@ -143,6 +148,12 @@ impl Case {
             } else {
                 let logits = if mode.starts_with("readback_") {
                     self.metal.to_device(&Device::Cpu)?
+                } else if mode == "metal_legacy" {
+                    if self.batch > 1 {
+                        self.metal.to_device(&Device::Cpu)?
+                    } else {
+                        self.metal.clone()
+                    }
                 } else {
                     self.cpu.clone()
                 };
@@ -189,7 +200,7 @@ impl Case {
         if audit {
             eprintln!("AUDIT_END mode={mode}");
         }
-        if mode.starts_with("metal_") {
+        if matches!(mode, "metal_compact" | "metal_queued") {
             for (row, history) in histories.iter().enumerate() {
                 assert_eq!(history.state().to_vec1::<u32>()?[1], steps as u32);
                 let tokens = history.tokens()?.to_vec1::<u32>()?;
@@ -252,7 +263,7 @@ fn benchmark_keyed_sampling() -> Result<()> {
             for filter in if quick {
                 vec!["topk40_p90"]
             } else {
-                vec!["greedy", "categorical", "topk40_p90"]
+                vec!["greedy", "top1", "categorical", "topk40_p90"]
             } {
                 if sampling_filter
                     .as_ref()
