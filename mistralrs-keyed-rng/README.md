@@ -78,8 +78,12 @@ separate immutable records so queued outputs remain valid.
 
 ## Integration boundaries
 
-Set `MISTRALRS_SAMPLING_RNG=keyed-threefry2x32-v1` before starting the process.
-The default remains Isaac64. This intentionally changes seeded output when enabled.
+Select `--sampling-rng keyed-threefry2x32-v1` in the CLI or
+`sampling_rng = "keyed-threefry2x32-v1"` in the TOML `[global]` section.
+The default remains `isaac64`. API requests can override the engine setting
+with `sampling_rng`; Rust builders use `SamplingRng::KeyedThreefry2x32V1`.
+Selection is local to each engine/request, survives engine restart and reload,
+and intentionally changes seeded output. The earlier environment switch is no longer used.
 Ordinary eligible Metal batches keep logits/candidates on device and read one
 compact batch of selected records. History commits are queued before that read.
 Both cache backends preserve eligible Metal causal logits before the sampler;
@@ -107,7 +111,7 @@ watermarking branch is imported.
 
 ```sh
 cargo test -p mistralrs-keyed-rng --features metal
-MISTRALRS_SAMPLING_RNG=keyed-threefry2x32-v1 cargo test -p mistralrs-core --features metal keyed_metal
+cargo test -p mistralrs-core --features metal keyed_metal
 cargo check -p mistralrs-core --features metal
 cargo check -p mistralrs-core
 ```

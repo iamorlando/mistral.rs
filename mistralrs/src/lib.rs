@@ -297,7 +297,9 @@ pub use mistralrs_core::{
 };
 
 // ========== Sampling ==========
-pub use mistralrs_core::{DrySamplingParams, ModelGenerationDefaults, SamplingParams, StopTokens};
+pub use mistralrs_core::{
+    DrySamplingParams, ModelGenerationDefaults, SamplingParams, SamplingRng, StopTokens,
+};
 
 // ========== Tool Types ==========
 pub use mistralrs_core::{

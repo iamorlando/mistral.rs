@@ -583,7 +583,12 @@ impl Engine {
             request.sampling_params.logits_bias.unwrap_or_default(),
             request.logits_processors.unwrap_or_default(),
         );
-        let sampler = handle_request_error!(sampler, request.response);
+        let sampler = handle_request_error!(sampler, request.response).with_sampling_rng(
+            request
+                .sampling_params
+                .sampling_rng
+                .unwrap_or(self.sampling_rng),
+        );
 
         if request.sampling_params.n_choices == 0 {
             request

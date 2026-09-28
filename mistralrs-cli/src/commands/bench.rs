@@ -157,6 +157,7 @@ pub async fn run_bench(
         .set_paged_attn(paged_attn)
         .with_cpu(cpu)
         .with_seed_optional(global.seed)
+        .with_sampling_rng(global.sampling_rng)
         .with_num_device_layers_optional(device_layers)
         .with_in_situ_quant_optional(isq)
         .with_paged_attn_gpu_mem_optional(paged_attn_gpu_mem)

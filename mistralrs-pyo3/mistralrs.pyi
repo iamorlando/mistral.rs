@@ -198,6 +198,7 @@ class ChatCompletionRequest:
     input_files: list[InputFile] | None = None
     ignore_eos: bool = False
     adapter: str | LoraAdapterGeneration | None = field(default=None, kw_only=True)
+    sampling_rng: str | None = field(default=None, kw_only=True)
 
 @dataclass
 class CompletionRequest:
@@ -233,6 +234,7 @@ class CompletionRequest:
     truncate_sequence: bool = False
     ignore_eos: bool = False
     adapter: str | LoraAdapterGeneration | None = field(default=None, kw_only=True)
+    sampling_rng: str | None = field(default=None, kw_only=True)
 
 @dataclass
 class EmbeddingRequest:
@@ -757,6 +759,7 @@ class Runner:
         mcp_client_config: McpClientConfigPy | None = None,
         code_execution_config: CodeExecutionConfig | None = None,
         shell_config: ShellConfig | None = None,
+        sampling_rng: str = "isaac64",
     ) -> None:
         """
         Load a model.
@@ -795,6 +798,7 @@ class Runner:
         - `no_paged_attn` disables PagedAttention on CUDA. Because PagedAttention is already disabled on Metal, this is only applicable on CUDA.
         - `paged_attn` enables PagedAttention on Metal. Because PagedAttention is already enabled on CUDA, this is only applicable on Metal.
         - `seed`, used to ensure reproducible random number generation.
+        - `sampling_rng`: `isaac64` (default) or `keyed-threefry2x32-v1`; requests may override it.
         - `enable_search`: Enable searching compatible with the OpenAI `web_search_options` setting. This loads the selected search embedding reranker (EmbeddingGemma by default).
         - `search_embedding_model`: select which built-in search embedding model to load (currently `"embedding_gemma"`).
         - `search_callback`: Custom Python callable to perform web searches. Should accept a query string and return a list of dicts with keys "title", "description", "url", and "content".

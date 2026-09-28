@@ -22,7 +22,43 @@ const SUPPRESS_TOKEN_LOGIT_BIAS: f32 = -1.0e9;
 mod keyed;
 #[cfg(all(test, feature = "metal"))]
 mod keyed_bench;
-pub(crate) use keyed::{keyed_sampling_enabled, KeyedSampleContext};
+pub(crate) use keyed::KeyedSampleContext;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, clap::ValueEnum)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
+pub enum SamplingRng {
+    #[default]
+    #[serde(rename = "isaac64")]
+    #[value(name = "isaac64")]
+    Isaac64,
+    #[serde(rename = "keyed-threefry2x32-v1")]
+    #[value(name = "keyed-threefry2x32-v1")]
+    KeyedThreefry2x32V1,
+}
+
+impl std::fmt::Display for SamplingRng {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Isaac64 => "isaac64",
+            Self::KeyedThreefry2x32V1 => mistralrs_keyed_rng::RNG_VERSION,
+        })
+    }
+}
+
+impl std::str::FromStr for SamplingRng {
+    type Err = String;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value {
+            "isaac64" => Ok(Self::Isaac64),
+            mistralrs_keyed_rng::RNG_VERSION => Ok(Self::KeyedThreefry2x32V1),
+            _ => Err(format!(
+                "Unknown sampling RNG `{value}`. Choose isaac64 or {}.",
+                mistralrs_keyed_rng::RNG_VERSION
+            )),
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 /// Optional generation defaults parsed from a model's `generation_config.json`.
@@ -65,6 +101,9 @@ pub enum StopTokens {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 /// Sampling params are used to control sampling.
 pub struct SamplingParams {
+    /// Overrides the engine sampling RNG when provided.
+    #[serde(default)]
+    pub sampling_rng: Option<SamplingRng>,
     pub temperature: Option<f64>,
     pub top_k: Option<usize>,
     pub top_p: Option<f64>,
@@ -91,6 +130,7 @@ impl SamplingParams {
     /// Unlike [`Self::deterministic`], this does not force `top_k = 1`.
     pub fn neutral() -> Self {
         Self {
+            sampling_rng: None,
             temperature: None,
             top_k: None,
             top_p: None,
@@ -114,6 +154,7 @@ impl SamplingParams {
     /// - No maximum length
     pub fn deterministic() -> Self {
         Self {
+            sampling_rng: None,
             temperature: None,
             top_k: Some(1),
             top_p: None,
@@ -302,6 +343,7 @@ impl<T: Fn(&Tensor, &[u32]) -> Result<Tensor> + Send + Sync> CustomLogitsProcess
 /// Sampler for sampling.
 #[derive(Clone)]
 pub struct Sampler {
+    sampling_rng: SamplingRng,
     temperature: Option<f64>,
     top_n_logprobs: usize,
     tokenizer: Option<Arc<Tokenizer>>,
@@ -723,6 +765,7 @@ impl Sampler {
             None => None,
         };
         Ok(Self {
+            sampling_rng: SamplingRng::default(),
             temperature,
             top_n_logprobs,
             tokenizer,
@@ -740,6 +783,15 @@ impl Sampler {
             #[cfg(feature = "cuda")]
             topk_sampling_cache: Arc::new(Mutex::new(None)),
         })
+    }
+
+    pub fn with_sampling_rng(mut self, sampling_rng: SamplingRng) -> Self {
+        self.sampling_rng = sampling_rng;
+        self
+    }
+
+    pub(crate) fn uses_keyed_rng(&self) -> bool {
+        self.sampling_rng == SamplingRng::KeyedThreefry2x32V1
     }
 
     pub fn is_argmax(&self) -> bool {
@@ -2479,6 +2531,31 @@ mod tests {
             .unwrap();
 
         assert_eq!(res.token, 1);
+    }
+
+    #[test]
+    fn sampling_rng_names_roundtrip_and_default_to_inheritance() {
+        use super::SamplingRng;
+
+        for (name, expected) in [
+            ("isaac64", SamplingRng::Isaac64),
+            (
+                mistralrs_keyed_rng::RNG_VERSION,
+                SamplingRng::KeyedThreefry2x32V1,
+            ),
+        ] {
+            assert_eq!(name.parse::<SamplingRng>().unwrap(), expected);
+            assert_eq!(expected.to_string(), name);
+            assert_eq!(serde_json::to_value(expected).unwrap(), name);
+            assert_eq!(
+                serde_json::from_value::<SamplingRng>(serde_json::json!(name)).unwrap(),
+                expected
+            );
+        }
+        assert!("typo".parse::<SamplingRng>().is_err());
+        assert_eq!(SamplingRng::default(), SamplingRng::Isaac64);
+        assert_eq!(SamplingParams::neutral().sampling_rng, None);
+        assert_eq!(SamplingParams::deterministic().sampling_rng, None);
     }
 
     #[test]

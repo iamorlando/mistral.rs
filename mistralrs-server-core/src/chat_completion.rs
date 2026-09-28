@@ -1051,6 +1051,7 @@ pub async fn parse_request(
             queued_at: None,
             messages,
             sampling_params: SamplingParams {
+                sampling_rng: oairequest.sampling_rng,
                 temperature: oairequest.temperature,
                 top_k: oairequest.top_k,
                 top_p: oairequest.top_p,

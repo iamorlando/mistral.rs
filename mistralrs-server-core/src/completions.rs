@@ -243,6 +243,7 @@ pub fn parse_request(
                 best_of: oairequest.best_of,
             },
             sampling_params: SamplingParams {
+                sampling_rng: oairequest.sampling_rng,
                 temperature: oairequest.temperature,
                 top_k: oairequest.top_k,
                 top_p: oairequest.top_p,

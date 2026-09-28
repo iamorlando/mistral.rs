@@ -615,6 +615,7 @@ impl AnthropicMessagesRequest {
             stop_seqs: self.stop_sequences.map(StopTokens::Multi),
             ignore_eos: false,
             seed: None,
+            sampling_rng: None,
             temperature: self.temperature,
             top_p: self.top_p,
             stream: self.stream,

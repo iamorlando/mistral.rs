@@ -1,0 +1,31 @@
+{
+  "core_sampling_integration_tests": {
+    "passed": 17,
+    "keyed_metal_tests_included": 6,
+    "environment_switch_required": false,
+    "seed_replay_algorithms": [
+      "isaac64",
+      "keyed-threefry2x32-v1"
+    ]
+  },
+  "core_rng_contract_test": "passed",
+  "cli_rng_and_toml_tests": {
+    "passed": 2
+  },
+  "server_request_rng_test": "passed",
+  "cli_doc_regeneration": "passed",
+  "cli_doc_golden_test": "passed",
+  "metal_compile": "passed: cargo check -p mistralrs-cli -p mistralrs-pyo3 --features metal,accelerate",
+  "cpu_compile": "passed: cargo check -p mistralrs-cli -p mistralrs-pyo3",
+  "sdk_examples_compile": "passed: cargo check -p mistralrs-cli -p mistralrs-pyo3 -p mistralrs --examples --features metal,accelerate",
+  "formatting": "passed: cargo fmt --all -- --check",
+  "python_compile": "passed for benchmark/audit/validation scripts and Python typing stub",
+  "native_python_interface": "passed: see python-validation.json",
+  "http_default_and_override_inference": "passed: 12 seeded requests across two engine defaults; unknown RNG rejected",
+  "model_readback_audit_keyed": "passed: explicit CLI RNG, zero Candle tensor copies, eight compact result reads",
+  "model_readback_audit_isaac64": "passed: explicit CLI RNG, eight full batch-logit copies",
+  "performance_measurement": false,
+  "unavailable_validation": [
+    "CUDA runtime not tested on Apple hardware"
+  ]
+}

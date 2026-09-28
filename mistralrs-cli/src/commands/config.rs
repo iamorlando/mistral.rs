@@ -78,6 +78,7 @@ async fn run_serve_config(cfg: crate::config::ServeConfig) -> Result<()> {
         .with_cpu(cpu)
         .with_enable_search(runtime.enable_search)
         .with_seed_optional(global.seed)
+        .with_sampling_rng(global.sampling_rng)
         .with_log_optional(global.log.as_ref().map(|p| p.to_string_lossy().to_string()))
         .with_chat_template_optional(
             runtime
@@ -250,6 +251,7 @@ async fn run_run_config(cfg: crate::config::RunConfig) -> Result<()> {
         .with_cpu(cpu)
         .with_enable_search(runtime.enable_search)
         .with_seed_optional(global.seed)
+        .with_sampling_rng(global.sampling_rng)
         .with_log_optional(global.log.as_ref().map(|p| p.to_string_lossy().to_string()))
         .with_chat_template_optional(
             runtime

@@ -186,6 +186,7 @@ pub struct MistralRsForServerBuilder {
 
     /// Integer seed to ensure reproducible random number generation.
     seed: Option<u64>,
+    sampling_rng: mistralrs_core::SamplingRng,
 
     /// Log all responses and requests to this file
     log: Option<String>,
@@ -311,6 +312,7 @@ impl Default for MistralRsForServerBuilder {
         Self {
             device: defaults::DEVICE,
             seed: defaults::SEED,
+            sampling_rng: mistralrs_core::SamplingRng::default(),
             log: defaults::LOG,
             model: defaults::MODEL,
             model_id_override: None,
@@ -373,6 +375,11 @@ impl MistralRsForServerBuilder {
     /// Sets the Candle device to use for model execution.
     pub fn with_device(mut self, device: Device) -> Self {
         self.device = Some(device);
+        self
+    }
+
+    pub fn with_sampling_rng(mut self, sampling_rng: mistralrs_core::SamplingRng) -> Self {
+        self.sampling_rng = sampling_rng;
         self
     }
 
@@ -940,6 +947,7 @@ impl MistralRsForServerBuilder {
         .with_no_kv_cache(self.no_kv_cache)
         .with_prefix_cache_n(self.prefix_cache_n)
         .with_disable_eos_stop(self.disable_eos_stop)
+        .with_sampling_rng(self.sampling_rng)
         .with_loader_config(loader_config);
 
         if let Some(id) = self.model_id_override {
@@ -1157,6 +1165,7 @@ impl MistralRsForServerBuilder {
         .with_no_kv_cache(self.no_kv_cache)
         .with_prefix_cache_n(self.prefix_cache_n)
         .with_disable_eos_stop(self.disable_eos_stop)
+        .with_sampling_rng(self.sampling_rng)
         .with_deferred_daemon_start(true)
         .with_loader_config(first_loader_config);
         if first_primary_id != first_pipeline_name {
@@ -1284,6 +1293,7 @@ impl MistralRsForServerBuilder {
                 no_prefix_cache: false,
                 prefix_cache_n: self.prefix_cache_n,
                 disable_eos_stop: self.disable_eos_stop,
+                sampling_rng: self.sampling_rng,
                 throughput_logging_enabled: !self.interactive_mode,
                 search_embedding_model,
                 search_callback: self.search_callback.clone(),

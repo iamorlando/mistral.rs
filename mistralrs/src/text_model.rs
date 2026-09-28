@@ -58,6 +58,7 @@ pub struct TextModelBuilder {
     pub(crate) no_kv_cache: bool,
     pub(crate) with_logging: bool,
     pub(crate) prefix_cache_n: Option<usize>,
+    pub(crate) sampling_rng: mistralrs_core::SamplingRng,
 }
 
 /// Builder for PagedAttention metadata.
@@ -141,6 +142,7 @@ impl TextModelBuilder {
             max_num_seqs: 32,
             no_kv_cache: false,
             prefix_cache_n: Some(16),
+            sampling_rng: mistralrs_core::SamplingRng::default(),
             with_logging: false,
             device_mapping: None,
             imatrix: None,

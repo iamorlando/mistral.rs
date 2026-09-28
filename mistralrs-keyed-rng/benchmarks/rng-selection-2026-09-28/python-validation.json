@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "module": "/Users/orlando/.cargo-target/debug/libmistralrs.dylib",
+  "request_choices": [
+    null,
+    "isaac64",
+    "keyed-threefry2x32-v1"
+  ],
+  "request_types": [
+    "CompletionRequest",
+    "ChatCompletionRequest"
+  ],
+  "unknown_rng_rejected": true,
+  "runner_signature": "(which, max_seqs=16, no_kv_cache=False, prefix_cache_n=16, token_source=\"cache\", mtp_model=None, mtp_n_predict=None, chat_template=None, jinja_explicit=None, num_device_layers=None, in_situ_quant=None, anymoe_config=None, pa_gpu_mem=None, pa_gpu_mem_usage=None, pa_ctxt_len=None, pa_blk_size=None, pa_cache_type=None, no_paged_attn=False, paged_attn=False, seed=None, enable_search=False, search_embedding_model=None, search_callback=None, tool_callbacks=None, mcp_client_config=None, code_execution_config=None, shell_config=None, sampling_rng=\"isaac64\")"
+}

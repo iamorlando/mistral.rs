@@ -1175,6 +1175,9 @@ pub struct ChatCompletionRequest {
     #[serde(default)]
     #[schema(example = false)]
     pub ignore_eos: bool,
+    /// Override the engine sampling RNG for this request.
+    #[serde(default)]
+    pub sampling_rng: Option<mistralrs_core::SamplingRng>,
     /// Seed for deterministic request-scoped sampling.
     #[schema(example = json!(Option::None::<u64>))]
     pub seed: Option<u64>,
@@ -1491,6 +1494,9 @@ pub struct CompletionRequest {
     #[serde(default)]
     #[schema(example = false)]
     pub ignore_eos: bool,
+    /// Override the engine sampling RNG for this request.
+    #[serde(default)]
+    pub sampling_rng: Option<mistralrs_core::SamplingRng>,
     /// Seed for deterministic request-scoped sampling.
     #[schema(example = json!(Option::None::<u64>))]
     pub seed: Option<u64>,
@@ -1896,6 +1902,9 @@ pub struct ResponsesCreateRequest {
     #[serde(default = "default_false")]
     #[schema(example = false)]
     pub ignore_eos: bool,
+    /// Override the engine sampling RNG for this request.
+    #[serde(default)]
+    pub sampling_rng: Option<mistralrs_core::SamplingRng>,
     /// Seed for deterministic request-scoped sampling.
     #[schema(example = json!(Option::None::<u64>))]
     pub seed: Option<u64>,
@@ -2133,6 +2142,38 @@ mod tests {
         assert!(chat.ignore_eos);
         assert!(completion.ignore_eos);
         assert!(responses.ignore_eos);
+    }
+
+    #[test]
+    fn sampling_rng_request_overrides_are_validated() {
+        use mistralrs_core::SamplingRng;
+        for (name, expected) in [
+            ("isaac64", SamplingRng::Isaac64),
+            ("keyed-threefry2x32-v1", SamplingRng::KeyedThreefry2x32V1),
+        ] {
+            let chat: ChatCompletionRequest =
+                serde_json::from_value(json!({"messages": "hello", "sampling_rng": name})).unwrap();
+            let completion: CompletionRequest =
+                serde_json::from_value(json!({"prompt": "hello", "sampling_rng": name})).unwrap();
+            let responses: ResponsesCreateRequest =
+                serde_json::from_value(json!({"input": "hello", "sampling_rng": name})).unwrap();
+            let open_responses: crate::responses::OpenResponsesCreateRequest =
+                serde_json::from_value(
+                    json!({"model": "model", "input": "hello", "sampling_rng": name}),
+                )
+                .unwrap();
+            assert_eq!(chat.sampling_rng, Some(expected));
+            assert_eq!(completion.sampling_rng, Some(expected));
+            assert_eq!(responses.sampling_rng, Some(expected));
+            assert_eq!(open_responses.sampling_rng, Some(expected));
+        }
+        let inherited: ChatCompletionRequest =
+            serde_json::from_value(json!({"messages": "hello"})).unwrap();
+        assert_eq!(inherited.sampling_rng, None);
+        assert!(serde_json::from_value::<ChatCompletionRequest>(
+            json!({"messages": "hello", "sampling_rng": "typo"})
+        )
+        .is_err());
     }
 
     #[test]

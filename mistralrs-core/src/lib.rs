@@ -197,8 +197,8 @@ pub use resource_plan::{
 };
 pub use response::*;
 pub use sampler::{
-    CustomLogitsProcessor, DrySamplingParams, ModelGenerationDefaults, SamplingParams, StopTokens,
-    TopLogprob,
+    CustomLogitsProcessor, DrySamplingParams, ModelGenerationDefaults, SamplingParams, SamplingRng,
+    StopTokens, TopLogprob,
 };
 pub use scheduler::{
     DefaultSchedulerMethod, SchedulerConfig, DEFAULT_MAX_DECODE_STEPS_BEFORE_PREFILL,
@@ -246,10 +246,18 @@ pub struct EngineConfig {
     pub no_prefix_cache: bool,
     pub prefix_cache_n: usize,
     pub disable_eos_stop: bool,
+    pub sampling_rng: SamplingRng,
     pub throughput_logging_enabled: bool,
     pub search_embedding_model: Option<SearchEmbeddingModel>,
     pub search_callback: Option<Arc<SearchCallback>>,
     pub tool_callbacks: tools::ToolCallbacksWithTools,
+}
+
+impl EngineConfig {
+    pub fn with_sampling_rng(mut self, sampling_rng: SamplingRng) -> Self {
+        self.sampling_rng = sampling_rng;
+        self
+    }
 }
 
 impl Default for EngineConfig {
@@ -259,6 +267,7 @@ impl Default for EngineConfig {
             no_prefix_cache: false,
             prefix_cache_n: 16,
             disable_eos_stop: false,
+            sampling_rng: SamplingRng::default(),
             throughput_logging_enabled: true,
             search_embedding_model: None,
             search_callback: None,
@@ -460,6 +469,7 @@ struct RebootState {
     no_prefix_cache: bool,
     prefix_cache_n: usize,
     disable_eos_stop: bool,
+    sampling_rng: SamplingRng,
     throughput_logging_enabled: bool,
     search_embedding_model: Option<SearchEmbeddingModel>,
     search_callback: Option<Arc<search::SearchCallback>>,
@@ -537,6 +547,7 @@ pub struct MistralRsBuilder {
     no_prefix_cache: Option<bool>,
     prefix_cache_n: Option<usize>,
     disable_eos_stop: Option<bool>,
+    sampling_rng: SamplingRng,
     throughput_logging_enabled: bool,
     search_embedding_model: Option<SearchEmbeddingModel>,
     search_callback: Option<Arc<SearchCallback>>,
@@ -567,6 +578,7 @@ impl MistralRsBuilder {
             no_prefix_cache: None,
             prefix_cache_n: None,
             disable_eos_stop: None,
+            sampling_rng: SamplingRng::default(),
             throughput_logging_enabled: throughput_logging,
             search_embedding_model,
             search_callback: None,
@@ -611,6 +623,11 @@ impl MistralRsBuilder {
         self.prefix_cache_n = Some(prefix_cache_n);
         self
     }
+    pub fn with_sampling_rng(mut self, sampling_rng: SamplingRng) -> Self {
+        self.sampling_rng = sampling_rng;
+        self
+    }
+
     pub fn with_disable_eos_stop(mut self, disable_eos_stop: bool) -> Self {
         self.disable_eos_stop = Some(disable_eos_stop);
         self
@@ -1243,14 +1260,7 @@ impl MistralRs {
                         rx,
                         pipeline,
                         method,
-                        config.no_kv_cache,
-                        config.no_prefix_cache,
-                        config.prefix_cache_n,
-                        config.disable_eos_stop,
-                        config.throughput_logging_enabled,
-                        config.search_embedding_model,
-                        config.search_callback.clone(),
-                        config.tool_callbacks.clone(),
+                        config,
                         logger_for_engine,
                         session_store_for_engine,
                         file_store_for_engine,
@@ -1283,14 +1293,7 @@ impl MistralRs {
                         rx,
                         pipeline,
                         method,
-                        config.no_kv_cache,
-                        config.no_prefix_cache,
-                        config.prefix_cache_n,
-                        config.disable_eos_stop,
-                        config.throughput_logging_enabled,
-                        config.search_embedding_model,
-                        config.search_callback.clone(),
-                        config.tool_callbacks.clone(),
+                        config,
                         logger_for_engine,
                         session_store_for_engine,
                         file_store_for_engine,
@@ -1524,6 +1527,7 @@ impl MistralRs {
             no_prefix_cache,
             prefix_cache_n,
             disable_eos_stop,
+            sampling_rng,
             throughput_logging_enabled,
             search_embedding_model,
             search_callback,
@@ -1567,6 +1571,7 @@ impl MistralRs {
             no_prefix_cache,
             prefix_cache_n,
             disable_eos_stop,
+            sampling_rng,
             throughput_logging_enabled,
             search_embedding_model,
             search_callback: search_callback.clone(),
@@ -1580,6 +1585,7 @@ impl MistralRs {
             no_prefix_cache,
             prefix_cache_n,
             disable_eos_stop,
+            sampling_rng,
             throughput_logging_enabled,
             search_embedding_model,
             search_callback,
@@ -1740,6 +1746,7 @@ impl MistralRs {
                 no_prefix_cache: reboot_state.no_prefix_cache,
                 prefix_cache_n: reboot_state.prefix_cache_n,
                 disable_eos_stop: reboot_state.disable_eos_stop,
+                sampling_rng: reboot_state.sampling_rng,
                 throughput_logging_enabled: reboot_state.throughput_logging_enabled,
                 search_embedding_model: reboot_state.search_embedding_model,
                 search_callback: reboot_state.search_callback.clone(),
@@ -2294,6 +2301,7 @@ impl MistralRs {
             no_prefix_cache: engine_config.no_prefix_cache,
             prefix_cache_n: engine_config.prefix_cache_n,
             disable_eos_stop: engine_config.disable_eos_stop,
+            sampling_rng: engine_config.sampling_rng,
             throughput_logging_enabled: engine_config.throughput_logging_enabled,
             search_embedding_model: engine_config.search_embedding_model,
             search_callback: engine_config.search_callback.clone(),
@@ -2626,6 +2634,7 @@ impl MistralRs {
                 no_prefix_cache: engine_instance.reboot_state.no_prefix_cache,
                 prefix_cache_n: engine_instance.reboot_state.prefix_cache_n,
                 disable_eos_stop: engine_instance.reboot_state.disable_eos_stop,
+                sampling_rng: engine_instance.reboot_state.sampling_rng,
                 throughput_logging_enabled: engine_instance.reboot_state.throughput_logging_enabled,
                 search_embedding_model: engine_instance.reboot_state.search_embedding_model,
                 search_callback: engine_instance.reboot_state.search_callback.clone(),
@@ -2804,6 +2813,7 @@ impl MistralRs {
             no_prefix_cache: unloaded_state.engine_config.no_prefix_cache,
             prefix_cache_n: unloaded_state.engine_config.prefix_cache_n,
             disable_eos_stop: unloaded_state.engine_config.disable_eos_stop,
+            sampling_rng: unloaded_state.engine_config.sampling_rng,
             throughput_logging_enabled: unloaded_state.engine_config.throughput_logging_enabled,
             search_embedding_model: unloaded_state.engine_config.search_embedding_model,
             search_callback: unloaded_state.engine_config.search_callback.clone(),

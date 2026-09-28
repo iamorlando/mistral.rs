@@ -544,6 +544,10 @@ pub struct OpenResponsesCreateRequest {
     #[serde(default)]
     pub ignore_eos: bool,
 
+    /// Override the engine sampling RNG for this request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sampling_rng: Option<mistralrs_core::SamplingRng>,
+
     /// Seed for deterministic request-scoped sampling
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seed: Option<u64>,
@@ -1988,6 +1992,7 @@ async fn parse_openresponses_request(
         stop_seqs: oairequest.stop_seqs,
         ignore_eos: oairequest.ignore_eos,
         seed: oairequest.seed,
+        sampling_rng: oairequest.sampling_rng,
         temperature: oairequest.temperature,
         top_p: oairequest.top_p,
         stream: oairequest.stream,

@@ -968,6 +968,7 @@ impl Runner {
         mcp_client_config = None,
         code_execution_config = None,
         shell_config = None,
+        sampling_rng = "isaac64",
     ))]
     fn new(
         which: Which,
@@ -997,7 +998,10 @@ impl Runner {
         mcp_client_config: Option<McpClientConfigPy>,
         code_execution_config: Option<CodeExecutionConfig>,
         shell_config: Option<ShellConfig>,
+        sampling_rng: &str,
     ) -> PyApiResult<Self> {
+        let sampling_rng: mistralrs_core::SamplingRng =
+            sampling_rng.parse().map_err(PyApiErr::from)?;
         let dynamic_lora = which_uses_dynamic_lora(&which);
         if anymoe_config.is_some() && dynamic_lora {
             return Err(PyApiErr::from(
@@ -1348,7 +1352,8 @@ impl Runner {
             None => None,
         };
         let mut builder =
-            MistralRsBuilder::new(pipeline, scheduler_config, false, search_embedding_model);
+            MistralRsBuilder::new(pipeline, scheduler_config, false, search_embedding_model)
+                .with_sampling_rng(sampling_rng);
         if let Some(cb) = cb {
             builder = builder.with_search_callback(cb);
         }
@@ -1703,6 +1708,7 @@ impl Runner {
                 queued_at: None,
                 messages,
                 sampling_params: SamplingParams {
+                    sampling_rng: request.sampling_rng,
                     temperature: request.temperature,
                     top_k: request.top_k,
                     top_p: request.top_p,
@@ -1934,6 +1940,7 @@ impl Runner {
                     best_of: request.best_of,
                 },
                 sampling_params: SamplingParams {
+                    sampling_rng: request.sampling_rng,
                     temperature: request.temperature,
                     top_k: request.top_k,
                     top_p: request.top_p,
@@ -2664,6 +2671,7 @@ impl Runner {
                 queued_at: None,
                 messages,
                 sampling_params: SamplingParams {
+                    sampling_rng: request.sampling_rng,
                     temperature: request.temperature,
                     top_k: request.top_k,
                     top_p: request.top_p,
@@ -2788,6 +2796,7 @@ impl Runner {
                     best_of: request.best_of,
                 },
                 sampling_params: SamplingParams {
+                    sampling_rng: request.sampling_rng,
                     temperature: request.temperature,
                     top_k: request.top_k,
                     top_p: request.top_p,

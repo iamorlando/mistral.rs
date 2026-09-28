@@ -212,6 +212,7 @@ pub struct Engine {
     paged_block_retention_monitor: Option<PrefixBlockRetentionRevocationMonitor>,
     is_debug: bool,
     disable_eos_stop: bool,
+    sampling_rng: crate::SamplingRng,
     throughput_logging_enabled: bool,
     logger: Arc<IntervalLogger>,
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
@@ -537,18 +538,23 @@ impl Engine {
         rx: Receiver<Request>,
         pipeline: Arc<Mutex<dyn Pipeline>>,
         config: SchedulerConfig,
-        mut no_kv_cache: bool,
-        mut no_prefix_cache: bool,
-        prefix_cache_n: usize,
-        disable_eos_stop: bool,
-        throughput_logging_enabled: bool,
-        search_embedding_model: Option<SearchEmbeddingModel>,
-        search_callback: Option<Arc<search::SearchCallback>>,
-        tool_callbacks: tools::ToolCallbacksWithTools,
+        engine_config: crate::EngineConfig,
         logger: Arc<IntervalLogger>,
         session_store: Arc<std::sync::Mutex<agentic_session::AgenticSessionStore>>,
         file_store: crate::files::FileStore,
     ) -> anyhow::Result<Self> {
+        let crate::EngineConfig {
+            mut no_kv_cache,
+            mut no_prefix_cache,
+            prefix_cache_n,
+            disable_eos_stop,
+            sampling_rng,
+            throughput_logging_enabled,
+            search_embedding_model,
+            search_callback,
+            tool_callbacks,
+        } = engine_config;
+        tracing::info!("Sampling RNG: {sampling_rng}");
         no_kv_cache |= get_mut_arcmutex!(pipeline).get_metadata().no_kv_cache;
 
         no_prefix_cache = no_prefix_cache
@@ -724,6 +730,7 @@ impl Engine {
             paged_block_retention_monitor,
             is_debug: DEBUG.load(Ordering::Relaxed),
             disable_eos_stop,
+            sampling_rng,
             throughput_logging_enabled,
             logger,
             handles: Arc::new(Mutex::new(Vec::new())),

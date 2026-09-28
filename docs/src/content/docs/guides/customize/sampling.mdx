@@ -56,19 +56,59 @@ DRY penalizes continuing token sequences that would reproduce spans from the pre
 - `dry_allowed_length`: match length tolerated before the penalty applies. Default `2`.
 - `dry_sequence_breakers`: strings that reset matching. Default `["\n", ":", "\"", "*"]`.
 
-## Versioned keyed RNG
+## RNG selection
 
-Set `MISTRALRS_SAMPLING_RNG=keyed-threefry2x32-v1` before starting the process to
-opt into KeyedRngs Threefry2x32 sampling. Isaac64 remains the default. Switching
-modes intentionally changes seeded output; record the mode alongside the request
-`seed` when reproducing generation.
+Choose the sampling RNG independently of the seed. `isaac64` is the default;
+`keyed-threefry2x32-v1` selects KeyedRngs Threefry2x32 and enables eligible
+Metal device sampling. Switching algorithms changes seeded output, so record
+both `sampling_rng` and `seed` when reproducing a request.
+
+Set the engine default for `run`, `serve`, or `bench`:
+
+```sh
+mistralrs serve -m HuggingFaceTB/SmolLM2-135M-Instruct --sampling-rng keyed-threefry2x32-v1
+```
+
+For `from-config`, set the same option in TOML:
+
+```toml
+[global]
+sampling_rng = "keyed-threefry2x32-v1"
+```
+
+Chat completions, completions, and Responses requests can override the engine
+default with `"sampling_rng": "isaac64"` or
+`"sampling_rng": "keyed-threefry2x32-v1"`. An omitted field inherits the engine
+setting. For example, with the OpenAI Python client:
+
+```python
+response = client.chat.completions.create(
+    model="default",
+    messages=[{"role": "user", "content": "Hello"}],
+    seed=42,
+    extra_body={"sampling_rng": "keyed-threefry2x32-v1"},
+)
+```
+
+The native Python API accepts `Runner(..., sampling_rng="keyed-threefry2x32-v1")`
+and a keyword-only `sampling_rng` override on `ChatCompletionRequest` and
+`CompletionRequest`. Rust model builders expose
+`.with_sampling_rng(SamplingRng::KeyedThreefry2x32V1)`; `RequestBuilder` exposes
+`.set_sampler_rng(SamplingRng::KeyedThreefry2x32V1)`. Direct `SamplingParams`
+requests use `sampling_rng: Some(SamplingRng::KeyedThreefry2x32V1)`.
+
+The selection belongs to the engine/request, so engines and requests can use
+different algorithms in the same process. The earlier
+`MISTRALRS_SAMPLING_RNG` environment switch is no longer used.
 
 Each sequence owns a seed. Draws depend on generated position, retry number, and
 purpose, so batch reordering does not advance another sequence's stream. Grammar
 retries use a new draw. Speculative drafting, acceptance, correction, and diagnostics
 have separate streams. Unseeded requests receive entropy once at admission.
 
-On Metal, eligible sampling keeps candidate probabilities, selected token tensors,
+On Metal, the optimized batch path requires every sequence to select the keyed
+RNG and excludes grammar, active tools, requested logprobs, custom processors,
+and DRY penalties. Eligible sampling keeps candidate probabilities, selected token tensors,
 history and penalty counts on device. A compact selected-token record is read for
 normal text and stop handling; text decode can reuse the selected device token as
 its next input. Full logprobs read additional reporting data after device selection.

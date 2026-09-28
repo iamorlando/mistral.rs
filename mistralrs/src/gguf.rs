@@ -50,6 +50,7 @@ pub struct GgufModelBuilder {
     pub(crate) no_kv_cache: bool,
     pub(crate) with_logging: bool,
     pub(crate) prefix_cache_n: Option<usize>,
+    pub(crate) sampling_rng: mistralrs_core::SamplingRng,
     pub(crate) code_exec_config: Option<mistralrs_core::CodeExecutionConfig>,
     pub(crate) shell_config: Option<mistralrs_core::ShellConfig>,
     pub(crate) lora_adapters: Option<Vec<LoraAdapterSpec>>,
@@ -79,6 +80,7 @@ impl GgufModelBuilder {
             max_num_seqs: 32,
             no_kv_cache: false,
             prefix_cache_n: Some(16),
+            sampling_rng: mistralrs_core::SamplingRng::default(),
             with_logging: false,
             topology: None,
             topology_path: None,
@@ -419,6 +421,11 @@ impl GgufModelBuilder {
     /// Disable KV cache. Trade performance for memory usage.
     pub fn with_no_kv_cache(mut self) -> Self {
         self.no_kv_cache = true;
+        self
+    }
+
+    pub fn with_sampling_rng(mut self, sampling_rng: mistralrs_core::SamplingRng) -> Self {
+        self.sampling_rng = sampling_rng;
         self
     }
 

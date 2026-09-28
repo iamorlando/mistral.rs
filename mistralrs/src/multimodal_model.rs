@@ -57,6 +57,7 @@ pub struct MultimodalModelBuilder {
     pub(crate) max_num_seqs: usize,
     pub(crate) with_logging: bool,
     pub(crate) prefix_cache_n: Option<usize>,
+    pub(crate) sampling_rng: mistralrs_core::SamplingRng,
 }
 
 impl MultimodalModelBuilder {
@@ -103,6 +104,7 @@ impl MultimodalModelBuilder {
             organization: IsqOrganization::Default,
             encoder_cache_memory_bytes: None,
             prefix_cache_n: None,
+            sampling_rng: mistralrs_core::SamplingRng::default(),
         }
     }
 

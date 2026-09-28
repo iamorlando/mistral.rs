@@ -37,6 +37,7 @@ quant = "4"
 | Field | CLI flag | Default | Purpose |
 |---|---|---|---|
 | `seed` | `--seed` | not set | Sampling seed. |
+| `sampling_rng` | `--sampling-rng` | `isaac64` | Sampling algorithm: `isaac64` or `keyed-threefry2x32-v1`. Requests can override it. |
 | `log` | `-l`, `--log` | not set | Log file for requests/responses. |
 | `token_source` | `--token-source` | `cache` | Token source string (`literal:<token>`, `env:<var>`, `path:<file>`, `cache`, `none`). |
 

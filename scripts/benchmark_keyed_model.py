@@ -66,11 +66,12 @@ def main():
             env = os.environ.copy()
             env.pop("MISTRALRS_SAMPLING_RNG", None)
             env["NO_COLOR"] = "1"
-            if mode.startswith("metal_keyed"):
-                env["MISTRALRS_SAMPLING_RNG"] = "keyed-threefry2x32-v1"
             run = command + (["--cpu"] if mode == "cpu_legacy" else [])
             if mode == "metal_keyed_before":
                 run[0] = str(args.baseline_binary.resolve())
+                env["MISTRALRS_SAMPLING_RNG"] = "keyed-threefry2x32-v1"
+            else:
+                run += ["--sampling-rng", "keyed-threefry2x32-v1" if mode == "metal_keyed" else "isaac64"]
             print(f"START round={round_index} {mode}", flush=True)
             result = subprocess.run(
                 run, env=env, text=True, stdout=subprocess.PIPE,

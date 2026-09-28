@@ -34,10 +34,11 @@ def main():
     if args.model:
         model_config = json.loads((args.model / "config.json").read_text())
         layers = model_config["num_hidden_layers"]
-        environment = "MISTRALRS_SAMPLING_RNG=" + ("legacy" if args.legacy else "keyed-threefry2x32-v1")
+        environment = "NO_COLOR=1"
         run = (f"bench -m {json.dumps(str(args.model.resolve()))} --dtype f32 --format plain "
                f"--token-source none --paged-attn off --device-layers {layers} --prompt-len 0 "
                "--depth 128 --gen-len 8 --iterations 1 --warmup 1")
+        run += " --sampling-rng " + ("isaac64" if args.legacy else "keyed-threefry2x32-v1")
         if args.batch != 1:
             run += f" --batch-size {args.batch}"
     dispatch_commands = ""

@@ -470,7 +470,7 @@ pub fn sample_draft_rows(
     for (row, seq) in sequences.iter().enumerate() {
         let row_logits = logits.get(row)?.to_dtype(candle_core::DType::F32)?;
         let sequence_rng = seq.sampling_rng(rng);
-        let sampled = if crate::sampler::keyed_sampling_enabled() {
+        let sampled = if seq.sampler().uses_keyed_rng() {
             let position = u32::try_from(contexts[row].len() - seq.prompt_tokens())
                 .map_err(candle_core::Error::msg)?;
             let uniform =

@@ -272,6 +272,7 @@ impl MultiModelBuilder {
             .with_no_kv_cache(add_model_config.engine_config.no_kv_cache)
             .with_no_prefix_cache(add_model_config.engine_config.no_prefix_cache)
             .with_prefix_cache_n(add_model_config.engine_config.prefix_cache_n)
+            .with_sampling_rng(add_model_config.engine_config.sampling_rng)
             .with_deferred_daemon_start(true);
 
         let mistralrs = runner_builder.build().await;
@@ -413,6 +414,7 @@ pub(crate) fn build_engine_config(
         no_prefix_cache: prefix_cache_n.is_none(),
         prefix_cache_n: prefix_cache_n.unwrap_or(16),
         disable_eos_stop: false,
+        sampling_rng: mistralrs_core::SamplingRng::default(),
     }
 }
 
@@ -447,7 +449,8 @@ pub(crate) async fn build_pipeline_from_text_loader(
         &builder.tool_callbacks,
         builder.no_kv_cache,
         builder.prefix_cache_n,
-    );
+    )
+    .with_sampling_rng(builder.sampling_rng);
     let mcp_client_config = builder.mcp_client_config.clone();
     let device = resolve_device(builder.force_cpu, builder.device.clone())?;
     builder.paged_attn_cfg = reserve_external_mtp_memory_with_runtime(
@@ -520,7 +523,8 @@ pub(crate) async fn build_pipeline_from_gguf_loader(
         &builder.tool_callbacks,
         builder.no_kv_cache,
         builder.prefix_cache_n,
-    );
+    )
+    .with_sampling_rng(builder.sampling_rng);
     let device = resolve_device(builder.force_cpu, builder.device.clone())?;
     builder.paged_attn_cfg = reserve_external_mtp_memory_with_runtime(
         builder.paged_attn_cfg,
@@ -614,7 +618,8 @@ pub async fn build_model_from_pipeline(
     runner_builder = runner_builder
         .with_no_kv_cache(add_model_config.engine_config.no_kv_cache)
         .with_no_prefix_cache(add_model_config.engine_config.no_prefix_cache)
-        .with_prefix_cache_n(add_model_config.engine_config.prefix_cache_n);
+        .with_prefix_cache_n(add_model_config.engine_config.prefix_cache_n)
+        .with_sampling_rng(add_model_config.engine_config.sampling_rng);
 
     Model::new(runner_builder.build().await)
 }
@@ -710,7 +715,8 @@ pub async fn build_text_pipeline(
         &builder.tool_callbacks,
         builder.no_kv_cache,
         builder.prefix_cache_n,
-    );
+    )
+    .with_sampling_rng(builder.sampling_rng);
 
     // Create loader config for unload/reload support
     let device_map_setting = builder
@@ -860,7 +866,8 @@ pub async fn build_multimodal_pipeline(
         &builder.tool_callbacks,
         false,
         builder.prefix_cache_n,
-    );
+    )
+    .with_sampling_rng(builder.sampling_rng);
 
     // Create loader config for unload/reload support
     let device_map_setting = builder
@@ -1021,7 +1028,8 @@ pub async fn build_gguf_pipeline(
         &builder.tool_callbacks,
         builder.no_kv_cache,
         builder.prefix_cache_n,
-    );
+    )
+    .with_sampling_rng(builder.sampling_rng);
 
     // Create loader config for unload/reload support
     let (max_seq_len, max_batch_size, max_num_images, max_image_length) = match &device_map_setting
@@ -1465,7 +1473,8 @@ pub async fn build_auto_pipeline(
         &builder.tool_callbacks,
         builder.no_kv_cache,
         builder.prefix_cache_n,
-    );
+    )
+    .with_sampling_rng(builder.sampling_rng);
 
     // Convert from_uqff Vec<PathBuf> to semicolon-separated string if present
     let from_uqff_str = join_path_list(builder.from_uqff.as_deref(), UQFF_MULTI_FILE_DELIMITER);

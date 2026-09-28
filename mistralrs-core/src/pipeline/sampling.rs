@@ -779,8 +779,8 @@ impl CausalLogitsBatch {
         }
     }
 
-    fn into_sampling_rows(self) -> Result<Vec<Tensor>> {
-        if crate::sampler::keyed_sampling_enabled() {
+    fn into_sampling_rows(self, seqs: &[&mut Sequence]) -> Result<Vec<Tensor>> {
+        if seqs.iter().any(|seq| seq.sampler().uses_keyed_rng()) {
             return match self {
                 Self::PerSequence(logits) => Ok(logits),
                 Self::Batched(logits) => (0..logits.dim(0)?).map(|idx| logits.i(idx)).collect(),
@@ -819,7 +819,7 @@ async fn sample_and_add_toks_inner(
     let sampled_vec = match metal.or(try_sample_batch_cuda(&logits, seqs, &rng)?) {
         Some(sampled) => sampled,
         None => {
-            let logits_seq = logits.into_sampling_rows()?;
+            let logits_seq = logits.into_sampling_rows(seqs)?;
             let sampling_futures: Vec<_> = std::iter::zip(logits_seq, seqs.iter_mut())
                 .map(|(logits_per_seq, seq)| {
                     let return_logprobs = seq.return_logprobs();
@@ -857,10 +857,10 @@ async fn sample_and_add_toks_inner(
 pub(crate) fn can_sample_batch_keyed_metal(seqs: &[&mut Sequence]) -> bool {
     #[cfg(feature = "metal")]
     {
-        crate::sampler::keyed_sampling_enabled()
-            && !seqs.is_empty()
+        !seqs.is_empty()
             && seqs.iter().all(|seq| {
-                matches!(seq.recognizer, SequenceRecognizer::None)
+                seq.sampler().uses_keyed_rng()
+                    && matches!(seq.recognizer, SequenceRecognizer::None)
                     && seq.tool_call_state.is_none()
                     && !seq.return_logprobs()
                     && seq.sampler().can_sample_keyed_metal()
@@ -979,7 +979,9 @@ pub(crate) fn can_sample_batch_cuda(seqs: &[&mut Sequence]) -> bool {
     {
         let mut categorical = None;
         for seq in seqs {
-            if !matches!(&seq.recognizer, SequenceRecognizer::None) || seq.tool_call_state.is_some()
+            if seq.sampler().uses_keyed_rng()
+                || !matches!(&seq.recognizer, SequenceRecognizer::None)
+                || seq.tool_call_state.is_some()
             {
                 return false;
             }
@@ -1060,7 +1062,8 @@ struct CudaTokenBatchPlan {
 
 #[cfg(feature = "cuda")]
 fn cuda_token_sampling_plan(seq: &Sequence) -> Option<CudaBatchSamplingPlan> {
-    if !matches!(&seq.recognizer, SequenceRecognizer::None)
+    if seq.sampler().uses_keyed_rng()
+        || !matches!(&seq.recognizer, SequenceRecognizer::None)
         || seq.tool_call_state.is_some()
         || seq.sampling_logprob_required()
         || seq.active_staged_speculative_len() != 0
@@ -1076,7 +1079,7 @@ fn prepare_cuda_token_batch(
     seqs: &[&mut Sequence],
     rng: &Arc<std::sync::Mutex<Isaac64Rng>>,
 ) -> Option<CudaTokenBatchPlan> {
-    if crate::sampler::keyed_sampling_enabled() {
+    if seqs.iter().any(|seq| seq.sampler().uses_keyed_rng()) {
         return None;
     }
     let mut sampler = None;
@@ -1376,7 +1379,7 @@ fn try_sample_batch_cuda(
     seqs: &[&mut Sequence],
     rng: &Arc<std::sync::Mutex<Isaac64Rng>>,
 ) -> Result<Option<Vec<Result<Logprobs>>>> {
-    if crate::sampler::keyed_sampling_enabled() {
+    if seqs.iter().any(|seq| seq.sampler().uses_keyed_rng()) {
         return Ok(None);
     }
     let logits = match logits {
@@ -1545,7 +1548,7 @@ pub async fn sample_sequence(
     let prompt_len = seq.prompt_tokens();
     let rng_clone = rng.clone();
     let logits_clone = logits.clone();
-    let keyed = crate::sampler::keyed_sampling_enabled() && !sample_speculative;
+    let keyed = sampler.uses_keyed_rng() && !sample_speculative;
     let first_lobprobs_response = if keyed {
         seq.sample_keyed_attempt(logits_clone, return_logprobs, 0, max_model_len)?
     } else if use_async_pool {
@@ -1763,7 +1766,17 @@ mod tests {
         )
     }
 
+    #[cfg(any(feature = "cuda", feature = "metal"))]
     fn sampled_test_sequence(seed: u64, top_k: i64, top_p: f64) -> Sequence {
+        test_sequence_with_rng(seed, top_k, top_p, crate::SamplingRng::Isaac64)
+    }
+
+    fn test_sequence_with_rng(
+        seed: u64,
+        top_k: i64,
+        top_p: f64,
+        sampling_rng: crate::SamplingRng,
+    ) -> Sequence {
         let (tx, _rx) = channel(1);
         let sampler = Sampler::new(
             Some(1.0),
@@ -1779,7 +1792,8 @@ mod tests {
             HashMap::new(),
             vec![],
         )
-        .unwrap();
+        .unwrap()
+        .with_sampling_rng(sampling_rng);
         let group = Arc::new(Mutex::new(SequenceGroup::new(1, false, true, None)));
         Sequence::new_waiting(
             vec![1, 2, 3],
@@ -1817,16 +1831,47 @@ mod tests {
         )
     }
 
+    #[cfg(feature = "cuda")]
     fn stochastic_test_sequence(seed: u64) -> Sequence {
         sampled_test_sequence(seed, -1, 1.0)
     }
 
     #[cfg(feature = "metal")]
+    fn keyed_test_sequence(seed: u64, top_k: i64, top_p: f64) -> Sequence {
+        test_sequence_with_rng(seed, top_k, top_p, crate::SamplingRng::KeyedThreefry2x32V1)
+    }
+
+    #[cfg(feature = "metal")]
+    #[test]
+    fn keyed_metal_batch_rejects_mixed_rng_choices() -> Result<()> {
+        let device = candle_core::Device::new_metal(0)?;
+        let logits = Tensor::new(&[0.0f32, 1.0, 2.0, 3.0], &device)?.reshape((1, 1, 4))?;
+        let mut keyed = keyed_test_sequence(42, 1, 1.0);
+        let mut legacy = sampled_test_sequence(42, 1, 1.0);
+        let rows = CausalLogitsBatch::PerSequence(vec![logits.clone(), logits.clone()]);
+        assert!(!can_sample_batch_keyed_metal(&[&mut keyed, &mut legacy]));
+        assert!(try_sample_batch_keyed_metal(
+            &rows,
+            &mut [&mut keyed, &mut legacy],
+            1024,
+            &[],
+            false
+        )?
+        .is_none());
+        assert!(keyed.keyed_history.is_none());
+        assert!(legacy.keyed_history.is_none());
+        let rows = CausalLogitsBatch::PerSequence(vec![logits]);
+        assert!(
+            try_sample_batch_keyed_metal(&rows, &mut [&mut keyed], 1024, &[], false)?.is_some()
+        );
+        assert!(keyed.keyed_history.is_some());
+        assert!(!legacy.sampler().uses_keyed_rng());
+        Ok(())
+    }
+
+    #[cfg(feature = "metal")]
     #[test]
     fn keyed_metal_fused_argmax_keeps_ranking_logprobs() -> Result<()> {
-        if !crate::sampler::keyed_sampling_enabled() {
-            return Ok(());
-        }
         let device = candle_core::Device::new_metal(0)?;
         let values = [-1.0f32, 1.0, 4.0, 4.0];
         let logits = Tensor::new(&values, &device)?.reshape((1, 1, 4))?;
@@ -1835,7 +1880,7 @@ mod tests {
                 .to_vec1::<f32>()?[2]
                 .ln();
         for ranking in [false, true] {
-            let mut seq = sampled_test_sequence(42, 1, 0.9);
+            let mut seq = keyed_test_sequence(42, 1, 0.9);
             if ranking {
                 *seq.get_mut_group() = SequenceGroup::new(1, false, false, Some(2));
             }
@@ -1868,14 +1913,14 @@ mod tests {
                 .to_vec1::<f32>()?[2]
                 .ln();
         for top_p in [0.1, 0.9, 1.0] {
-            let mut a = sampled_test_sequence(42, 1, top_p);
-            let mut b = sampled_test_sequence(43, 1, top_p);
+            let mut a = keyed_test_sequence(42, 1, top_p);
+            let mut b = keyed_test_sequence(43, 1, top_p);
             for return_logprobs in [false, true] {
                 let sampled = a.sample_keyed_attempt(logits.clone(), return_logprobs, 0, 1024)?;
                 assert_eq!(sampled.token, 2);
                 assert!((sampled.logprob - expected).abs() < 1e-5);
             }
-            if crate::sampler::keyed_sampling_enabled() {
+            {
                 let rows = CausalLogitsBatch::PerSequence(vec![logits.reshape((1, 1, 4))?; 2]);
                 let results =
                     try_sample_batch_keyed_metal(&rows, &mut [&mut a, &mut b], 1024, &[], false)?
@@ -1895,8 +1940,8 @@ mod tests {
     fn keyed_metal_retry_commits_once_and_replays_after_rebatching() -> Result<()> {
         let device = candle_core::Device::new_metal(0)?;
         let logits = Tensor::new(&[0.1f32, 0.2, 0.3, 0.4], &device)?;
-        let mut a = sampled_test_sequence(42, 3, 0.9);
-        let mut b = sampled_test_sequence(43, 3, 0.9);
+        let mut a = keyed_test_sequence(42, 3, 0.9);
+        let mut b = keyed_test_sequence(43, 3, 0.9);
         a.set_prefill_toks(vec![3]);
         let first = a.sample_keyed_attempt(logits.clone(), false, 0, 1024)?;
         let _ = b.sample_keyed_attempt(logits.clone(), false, 0, 1024)?;
@@ -1956,13 +2001,10 @@ mod tests {
     #[cfg(feature = "metal")]
     #[tokio::test]
     async fn keyed_metal_serving_batch_preserves_device_rows() -> Result<()> {
-        if !crate::sampler::keyed_sampling_enabled() {
-            return Ok(());
-        }
         let device = candle_core::Device::new_metal(0)?;
         let logits = Tensor::new(&[0.1f32, 0.2, 0.3, 0.4], &device)?.reshape((1, 1, 4))?;
-        let mut a = sampled_test_sequence(42, 3, 0.9);
-        let mut b = sampled_test_sequence(43, 3, 0.9);
+        let mut a = keyed_test_sequence(42, 3, 0.9);
+        let mut b = keyed_test_sequence(43, 3, 0.9);
         let expected_a = a
             .sample_keyed_attempt(logits.flatten_all()?, false, 0, 1024)?
             .token;
@@ -1985,7 +2027,7 @@ mod tests {
             );
         }
         assert!(rows
-            .into_sampling_rows()?
+            .into_sampling_rows(&[&mut a, &mut b])?
             .iter()
             .all(|row| row.device().is_metal()));
         Ok(())
@@ -1994,14 +2036,11 @@ mod tests {
     #[cfg(feature = "metal")]
     #[test]
     fn keyed_metal_batch_invalid_row_discards_uncommitted_history() -> Result<()> {
-        if !crate::sampler::keyed_sampling_enabled() {
-            return Ok(());
-        }
         let device = candle_core::Device::new_metal(0)?;
         let good = Tensor::new(&[0.1f32, 0.2, 0.3, 0.4], &device)?.reshape((1, 1, 4))?;
         let bad = Tensor::new(&[f32::NAN, 0.2, 0.3, 0.4], &device)?.reshape((1, 1, 4))?;
-        let mut a = sampled_test_sequence(42, 3, 0.9);
-        let mut b = sampled_test_sequence(43, 3, 0.9);
+        let mut a = keyed_test_sequence(42, 3, 0.9);
+        let mut b = keyed_test_sequence(43, 3, 0.9);
         let rows = CausalLogitsBatch::PerSequence(vec![good, bad]);
         let result =
             try_sample_batch_keyed_metal(&rows, &mut [&mut a, &mut b], 1024, &[], false)?.unwrap();
@@ -2035,20 +2074,29 @@ mod tests {
 
     #[tokio::test]
     async fn seeded_sampling_is_independent_of_sequence_order() {
-        let fallback = || Arc::new(std::sync::Mutex::new(Isaac64Rng::seed_from_u64(999)));
-        let (mut first_a, mut first_b) =
-            (stochastic_test_sequence(42), stochastic_test_sequence(43));
-        let a_then_b = (
-            sample_test_token(&mut first_a, fallback()).await,
-            sample_test_token(&mut first_b, fallback()).await,
-        );
+        for sampling_rng in [
+            crate::SamplingRng::Isaac64,
+            crate::SamplingRng::KeyedThreefry2x32V1,
+        ] {
+            let fallback = || Arc::new(std::sync::Mutex::new(Isaac64Rng::seed_from_u64(999)));
+            let (mut first_a, mut first_b) = (
+                test_sequence_with_rng(42, -1, 1.0, sampling_rng),
+                test_sequence_with_rng(43, -1, 1.0, sampling_rng),
+            );
+            let a_then_b = (
+                sample_test_token(&mut first_a, fallback()).await,
+                sample_test_token(&mut first_b, fallback()).await,
+            );
 
-        let (mut second_a, mut second_b) =
-            (stochastic_test_sequence(42), stochastic_test_sequence(43));
-        let b = sample_test_token(&mut second_b, fallback()).await;
-        let a = sample_test_token(&mut second_a, fallback()).await;
+            let (mut second_a, mut second_b) = (
+                test_sequence_with_rng(42, -1, 1.0, sampling_rng),
+                test_sequence_with_rng(43, -1, 1.0, sampling_rng),
+            );
+            let b = sample_test_token(&mut second_b, fallback()).await;
+            let a = sample_test_token(&mut second_a, fallback()).await;
 
-        assert_eq!(a_then_b, (a, b));
+            assert_eq!(a_then_b, (a, b));
+        }
     }
 
     #[cfg(feature = "cuda")]

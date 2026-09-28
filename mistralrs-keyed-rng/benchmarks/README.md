@@ -1,5 +1,9 @@
 # Sampling benchmarks
 
+The [RNG selector validation](rng-selection-2026-09-28/README.md) verifies the
+explicit CLI and request settings reach the same GPU path, including live HTTP
+overrides and native Python request construction.
+
 The latest [batch residency and fused greedy report](m2-max-fused-2026-09-27/README.md)
 includes release-model gains over reference Metal and CPU, size-aware full-model
 readback audits, and the complete sampling matrix.
@@ -106,6 +110,11 @@ cargo build -p mistralrs-cli --features metal,accelerate
 python3 scripts/benchmark_keyed_model.py /path/to/mistralrs /path/to/model --features metal,accelerate --output /tmp/keyed-model
 python3 scripts/audit_keyed_readbacks.py /path/to/mistralrs /path/to/candle/candle-core --model /path/to/model --output /tmp/model-keyed-readbacks.txt
 ```
+
+The model script selects `--sampling-rng isaac64` or
+`--sampling-rng keyed-threefry2x32-v1` explicitly. The model readback audit uses
+the same CLI selection, so it verifies configuration reaches the device sampler.
+Historical reports record the environment switch used by their measured revisions.
 
 The model benchmark runs the default CPU sampler, default Metal sampler, and keyed
 Metal sampler with identical f32 weights and greedy decoding. It explicitly maps

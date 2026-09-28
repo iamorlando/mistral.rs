@@ -74,6 +74,7 @@ pub struct ModelBuilder {
     pub(crate) max_num_seqs: usize,
     pub(crate) with_logging: bool,
     pub(crate) prefix_cache_n: Option<usize>,
+    pub(crate) sampling_rng: mistralrs_core::SamplingRng,
 
     // Auto-model unique fields
     pub(crate) max_edge: Option<u32>,
@@ -109,6 +110,7 @@ impl ModelBuilder {
             paged_attn_cfg: None,
             max_num_seqs: 32,
             prefix_cache_n: Some(16),
+            sampling_rng: mistralrs_core::SamplingRng::default(),
             with_logging: false,
             device_mapping: None,
             imatrix: None,

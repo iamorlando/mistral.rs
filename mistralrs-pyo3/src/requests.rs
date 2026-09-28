@@ -108,6 +108,7 @@ pub struct CompletionRequest {
     pub(crate) dry_sequence_breakers: Option<Vec<String>>,
     pub(crate) truncate_sequence: bool,
     pub(crate) ignore_eos: bool,
+    pub(crate) sampling_rng: Option<mistralrs_core::SamplingRng>,
 }
 
 #[pymethods]
@@ -142,6 +143,7 @@ impl CompletionRequest {
         ignore_eos=false,
         *,
         adapter=None,
+        sampling_rng=None,
     ))]
     fn new(
         prompt: String,
@@ -171,6 +173,7 @@ impl CompletionRequest {
         truncate_sequence: Option<bool>,
         ignore_eos: bool,
         adapter: Option<Py<PyAny>>,
+        sampling_rng: Option<&str>,
     ) -> PyResult<Self> {
         Ok(Self {
             prompt,
@@ -200,6 +203,10 @@ impl CompletionRequest {
             dry_sequence_breakers,
             truncate_sequence: truncate_sequence.unwrap_or(false),
             ignore_eos,
+            sampling_rng: sampling_rng
+                .map(str::parse)
+                .transpose()
+                .map_err(PyValueError::new_err)?,
         })
     }
 }
@@ -332,6 +339,7 @@ pub struct ChatCompletionRequest {
     pub(crate) enable_thinking: Option<bool>,
     pub(crate) truncate_sequence: bool,
     pub(crate) ignore_eos: bool,
+    pub(crate) sampling_rng: Option<mistralrs_core::SamplingRng>,
     pub(crate) reasoning_effort: Option<ReasoningEffort>,
     /// Maximum number of tool-call rounds the server will auto-execute.
     pub(crate) max_tool_rounds: Option<usize>,
@@ -399,6 +407,7 @@ impl ChatCompletionRequest {
         ignore_eos=false,
         *,
         adapter=None,
+        sampling_rng=None,
     ))]
     fn new(
         messages: Py<PyAny>,
@@ -442,6 +451,7 @@ impl ChatCompletionRequest {
         input_files: Option<Vec<crate::files::InputFile>>,
         ignore_eos: bool,
         adapter: Option<Py<PyAny>>,
+        sampling_rng: Option<&str>,
     ) -> PyResult<Self> {
         let messages = Python::with_gil(|py| {
             if let Ok(messages) = messages.bind(py).downcast_exact::<PyList>() {
@@ -529,6 +539,10 @@ impl ChatCompletionRequest {
             enable_thinking,
             truncate_sequence: truncate_sequence.unwrap_or(false),
             ignore_eos,
+            sampling_rng: sampling_rng
+                .map(str::parse)
+                .transpose()
+                .map_err(PyValueError::new_err)?,
             reasoning_effort,
             max_tool_rounds,
             tool_dispatch_url,
@@ -589,7 +603,7 @@ mod tests {
             .unwrap();
         assert!(completion.starts_with("(prompt, model, best_of=1"));
         assert!(completion.contains("ignore_eos=False"));
-        assert!(completion.ends_with("*, adapter=None)"));
+        assert!(completion.ends_with("*, adapter=None, sampling_rng=None)"));
 
         let chat = PyClassImplCollector::<ChatCompletionRequest>::new()
             .new_text_signature()
@@ -597,7 +611,7 @@ mod tests {
         assert!(chat.starts_with("(messages, model, logprobs=False"));
         assert!(chat.contains("reasoning_effort=None"));
         assert!(chat.contains("ignore_eos=False"));
-        assert!(chat.ends_with("*, adapter=None)"));
+        assert!(chat.ends_with("*, adapter=None, sampling_rng=None)"));
     }
 
     #[test]

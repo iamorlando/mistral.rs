@@ -1,0 +1,96 @@
+{
+  "passed": true,
+  "cases": [
+    {
+      "engine_rng": "isaac64",
+      "request_rng": null,
+      "seed": 42,
+      "text_sha256": "afcca2fbdae11cabb929f62b8e5b897b9a9972f7d663efd293455e3d2522db37",
+      "text": "named Luna lived in a small town surrounded by rolling hills and rolling hills. Luna loved to explore and play in the woods"
+    },
+    {
+      "engine_rng": "isaac64",
+      "request_rng": "isaac64",
+      "seed": 42,
+      "text_sha256": "afcca2fbdae11cabb929f62b8e5b897b9a9972f7d663efd293455e3d2522db37",
+      "text": "named Luna lived in a small town surrounded by rolling hills and rolling hills. Luna loved to explore and play in the woods"
+    },
+    {
+      "engine_rng": "isaac64",
+      "request_rng": "keyed-threefry2x32-v1",
+      "seed": 42,
+      "text_sha256": "fdb59db66e3a8673767fafde884994dc57e1265e976e6704cb3528b35cc2ba0e",
+      "text": "named Luna lived in a cozy little house with her family. She loved to play and explore her house and its surroundings."
+    },
+    {
+      "engine_rng": "isaac64",
+      "request_rng": null,
+      "seed": 123,
+      "text_sha256": "1286b1b9d8452184a27c7369ee6f78862940323f1e578eb234e5ff2c88538047",
+      "text": "named Max was wandering the streets of a small town. He had heard stories of a mysterious park, hidden behind a secret"
+    },
+    {
+      "engine_rng": "isaac64",
+      "request_rng": "isaac64",
+      "seed": 123,
+      "text_sha256": "1286b1b9d8452184a27c7369ee6f78862940323f1e578eb234e5ff2c88538047",
+      "text": "named Max was wandering the streets of a small town. He had heard stories of a mysterious park, hidden behind a secret"
+    },
+    {
+      "engine_rng": "isaac64",
+      "request_rng": "keyed-threefry2x32-v1",
+      "seed": 123,
+      "text_sha256": "f0b344cafd66f90a32eb66f754119fdfbcc77fc108b80fb9135775b7148cf233",
+      "text": "named Whiskers lived in a forest. Whiskers had a special ability, but it was also a curse."
+    },
+    {
+      "engine_rng": "keyed-threefry2x32-v1",
+      "request_rng": null,
+      "seed": 42,
+      "text_sha256": "fdb59db66e3a8673767fafde884994dc57e1265e976e6704cb3528b35cc2ba0e",
+      "text": "named Luna lived in a cozy little house with her family. She loved to play and explore her house and its surroundings."
+    },
+    {
+      "engine_rng": "keyed-threefry2x32-v1",
+      "request_rng": "isaac64",
+      "seed": 42,
+      "text_sha256": "afcca2fbdae11cabb929f62b8e5b897b9a9972f7d663efd293455e3d2522db37",
+      "text": "named Luna lived in a small town surrounded by rolling hills and rolling hills. Luna loved to explore and play in the woods"
+    },
+    {
+      "engine_rng": "keyed-threefry2x32-v1",
+      "request_rng": "keyed-threefry2x32-v1",
+      "seed": 42,
+      "text_sha256": "fdb59db66e3a8673767fafde884994dc57e1265e976e6704cb3528b35cc2ba0e",
+      "text": "named Luna lived in a cozy little house with her family. She loved to play and explore her house and its surroundings."
+    },
+    {
+      "engine_rng": "keyed-threefry2x32-v1",
+      "request_rng": null,
+      "seed": 123,
+      "text_sha256": "f0b344cafd66f90a32eb66f754119fdfbcc77fc108b80fb9135775b7148cf233",
+      "text": "named Whiskers lived in a forest. Whiskers had a special ability, but it was also a curse."
+    },
+    {
+      "engine_rng": "keyed-threefry2x32-v1",
+      "request_rng": "isaac64",
+      "seed": 123,
+      "text_sha256": "1286b1b9d8452184a27c7369ee6f78862940323f1e578eb234e5ff2c88538047",
+      "text": "named Max was wandering the streets of a small town. He had heard stories of a mysterious park, hidden behind a secret"
+    },
+    {
+      "engine_rng": "keyed-threefry2x32-v1",
+      "request_rng": "keyed-threefry2x32-v1",
+      "seed": 123,
+      "text_sha256": "f0b344cafd66f90a32eb66f754119fdfbcc77fc108b80fb9135775b7148cf233",
+      "text": "named Whiskers lived in a forest. Whiskers had a special ability, but it was also a curse."
+    }
+  ],
+  "checks": [
+    "omitted request RNG inherits engine default",
+    "explicit request RNG overrides either engine default",
+    "both algorithms reproduce their seeded output across engine defaults",
+    "algorithms produce distinct outputs on this fixture",
+    "unknown request RNG rejects with HTTP 400/422"
+  ]
+}

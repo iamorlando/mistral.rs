@@ -1,0 +1,56 @@
+{
+  "date": "2026-09-28",
+  "source_base": "fd2c3e36b8308c8e2188740170fbf252a7f04bed",
+  "hardware": "Apple M2 Max, 64 GiB",
+  "features": [
+    "metal",
+    "accelerate"
+  ],
+  "profile": "optimized dev with debug information; not a throughput experiment",
+  "model": {
+    "id": "HuggingFaceTB/SmolLM2-135M-Instruct",
+    "revision": "12fd25f77366fa6b3b4b768ec3050bf629380bac",
+    "dtype": "f32",
+    "layers": 30,
+    "paged_attention": false
+  },
+  "source_sha256": {
+    "mistralrs-cli/src/args/mod.rs": "926930720d68b078e204535dd367f618ae9947b2c260997d8946c6d54790f6c8",
+    "mistralrs-cli/src/commands/bench.rs": "99ca91b44d34e7545f8fe840289fd91a1e936df7ab86b12198a0528fc4f6fa5c",
+    "mistralrs-cli/src/commands/config.rs": "069adb35848b54fcccf492e3ba90c7962f62f287321f80416eb6e82958337012",
+    "mistralrs-cli/src/commands/run/interactive.rs": "dedb7766abd68c63bdf27a7916dc40a66b40f29ba6d6d8d3510b4a2b9a5ffa20",
+    "mistralrs-cli/src/commands/run/mod.rs": "6c93ac89b25081e1b88c6158490d591f1b38bc961f358d9c1bf6bdd6e4b5e73a",
+    "mistralrs-cli/src/commands/serve.rs": "845149e0cc47b093bd0087b34f1aa75782643930132259739c67cab9b7a53bca",
+    "mistralrs-cli/src/config/mod.rs": "802a2dedabe8bbcdd3dbea1756504c89efb94bb48ef3d6422b907cfe21d52714",
+    "mistralrs-core/src/engine/add_request.rs": "c475a3bb09674608a62a1a1f7ecd40b19e5eb18ed2d1766a0b68a72397bed041",
+    "mistralrs-core/src/engine/mod.rs": "a9828e9bb3f4917acd161816dcced712e84fc7034455431f1df34fe6802a3620",
+    "mistralrs-core/src/lib.rs": "7b4794e6997cc2fb4f2af082334e9996c423341a1e91819b4970d5dd137484f4",
+    "mistralrs-core/src/pipeline/sampling.rs": "1f3db739c9b084391c38d9c3b268563c2dcfa5ea285466e8a7eb866162750cd5",
+    "mistralrs-core/src/sampler.rs": "040ac05a101737e7314406b666f39a75771ae951392ab9d65628374558c08301",
+    "mistralrs-core/src/sampler/keyed.rs": "53e8481ed5f0038ff82da51d87281259c5145f511e7edf1eb5939852e0dd7ef2",
+    "mistralrs-core/src/speculative/proposer.rs": "488bc4c76a06a1ed3b81b5e69ced353bfd581cd6083740463eebbe5432432fdb",
+    "mistralrs-core/src/speculative/verifier.rs": "b019801f85798046be8eea8c9147f433f35ce1e882778cbe3f2f5214aaba6f5a",
+    "mistralrs-pyo3/src/lib.rs": "1f72c50d5f48ca049a38905b4c19fec646af3440db93a3b84b353642569970e6",
+    "mistralrs-pyo3/src/requests.rs": "7e7e1b7ada7966e00a263858d1e5da99b53cf1841b6da7bceb2aa7b538fd3055",
+    "mistralrs-server-core/src/anthropic.rs": "40b3b7181eb73816432a75287fda248ae046d3f14d9fd007ad57c135461abe94",
+    "mistralrs-server-core/src/chat_completion.rs": "e048c55ba90ba62cb63170bc757ee6b2d26f9e3c9562f08e081ee318f86d5a5a",
+    "mistralrs-server-core/src/completions.rs": "5663d621b07f2465df421587eedfbd7ab6772f424860c06c5a04d52116bef9b2",
+    "mistralrs-server-core/src/mistralrs_for_server_builder.rs": "3e0ad10a6ec2496516f2513ff3cd43fc67510a26ba4c535c3c7a46ff7046db2f",
+    "mistralrs-server-core/src/openai.rs": "1746850b7840821932d637bf62736443c6a57e119c524fb206dd485a200bff71",
+    "mistralrs-server-core/src/responses.rs": "aac2ef1b43bcdd17af726e6c0e0fa58622c183653d5f9187576ee2e1cfbb68a7",
+    "mistralrs/src/auto_model.rs": "5530f9cd50b9bc4ab8e6ca8e9361da71c4c251be648d8146500cdc6807c70f0a",
+    "mistralrs/src/builder_macros.rs": "2a0cba60d97839c6aa0dc8f08989aa9b707c086756b140bfefe071ddfe43df55",
+    "mistralrs/src/gguf.rs": "c8ff69b88c187bd5113b96bc0f4f2e67dfd252d619db3c5ec35f8ca5df335c0c",
+    "mistralrs/src/lib.rs": "ec317ffe38e000eced7f1a449726368aefc676107de6cb4151186d5420f0a33c",
+    "mistralrs/src/messages.rs": "aa19716f227dbb50e175fca79064aa703330c83226693cb0977aaa6cf4c967a1",
+    "mistralrs/src/model_builder_trait.rs": "27877d1d869c4b329fcc31e74ffc06f80ff47cd6dce9d8a8cff06bc3c6224b18",
+    "mistralrs/src/multimodal_model.rs": "5c04edc126d56fd8576753a9b3ecbfd25f8982407cb96eb3b28458fde00b9b7d",
+    "mistralrs/src/text_model.rs": "4f59b69f4684168aa49a9ad4d30592439d8a50c2d35b7af8ded88b9d7b744bfd",
+    "scripts/audit_keyed_readbacks.py": "95f44d02cacaa8e32971cbd8f8467514b159623723cb813233114e665a3ef4ec",
+    "scripts/benchmark_keyed_model.py": "73515fb5564d689bcac12ab02377adad580073d0a7438eb6270a207c90d57dbe"
+  },
+  "binary_sha256": {
+    "cli": "122857a467811c9a314faefc887c3f0701fcc10486ec498680e6175a20a17ee7",
+    "python": "6bce82ebb8b3d9706935871977a5b34d0ca44c2e073b9f3b27625a74952acd53"
+  }
+}

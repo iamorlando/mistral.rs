@@ -1,5 +1,5 @@
 use super::*;
-use mistralrs_keyed_rng::{Purpose, RNG_VERSION};
+use mistralrs_keyed_rng::Purpose;
 
 pub(crate) struct KeyedSampleContext<'a> {
     pub tokens: &'a [u32],
@@ -13,13 +13,6 @@ pub(crate) struct KeyedMetalContext {
     pub key: mistralrs_keyed_rng::SequenceKey,
     pub attempt: u32,
     pub return_logprobs: bool,
-}
-
-pub(crate) fn keyed_sampling_enabled() -> bool {
-    static ENABLED: LazyLock<bool> = LazyLock::new(|| {
-        std::env::var("MISTRALRS_SAMPLING_RNG").is_ok_and(|value| value == RNG_VERSION)
-    });
-    *ENABLED
 }
 
 impl Sampler {

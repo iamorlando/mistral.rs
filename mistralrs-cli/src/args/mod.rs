@@ -560,6 +560,11 @@ pub struct GlobalOptions {
     #[serde(default)]
     pub seed: Option<u64>,
 
+    /// Sampling RNG algorithm; keyed Threefry enables eligible device-resident Metal sampling.
+    #[arg(long, value_enum, global = true, default_value_t)]
+    #[serde(default)]
+    pub sampling_rng: mistralrs_core::SamplingRng,
+
     /// Log all requests and responses to this file
     #[arg(long, short, global = true)]
     #[serde(default)]
@@ -980,6 +985,7 @@ impl Default for GlobalOptions {
     fn default() -> Self {
         Self {
             seed: None,
+            sampling_rng: mistralrs_core::SamplingRng::default(),
             log: None,
             token_source: TokenSource::CacheToken,
             verbose: 0,
@@ -1064,6 +1070,49 @@ mod tests {
     use std::{fs, path::Path};
 
     use super::*;
+
+    #[test]
+    fn sampling_rng_is_global_and_validated() {
+        use mistralrs_core::SamplingRng;
+        for command in ["run", "serve", "bench"] {
+            let default = Cli::try_parse_from(["mistralrs", command, "-m", "model"]).unwrap();
+            assert_eq!(default.global.sampling_rng, SamplingRng::Isaac64);
+            for (name, expected) in [
+                ("isaac64", SamplingRng::Isaac64),
+                ("keyed-threefry2x32-v1", SamplingRng::KeyedThreefry2x32V1),
+            ] {
+                let before = Cli::try_parse_from([
+                    "mistralrs",
+                    "--sampling-rng",
+                    name,
+                    command,
+                    "-m",
+                    "model",
+                ])
+                .unwrap();
+                let after = Cli::try_parse_from([
+                    "mistralrs",
+                    command,
+                    "-m",
+                    "model",
+                    "--sampling-rng",
+                    name,
+                ])
+                .unwrap();
+                assert_eq!(before.global.sampling_rng, expected);
+                assert_eq!(after.global.sampling_rng, expected);
+            }
+            assert!(Cli::try_parse_from([
+                "mistralrs",
+                command,
+                "-m",
+                "model",
+                "--sampling-rng",
+                "typo"
+            ])
+            .is_err());
+        }
+    }
 
     fn resolve_default_command(command: &str, args: &[&str]) -> anyhow::Result<ModelType> {
         let cli = Cli::try_parse_from(

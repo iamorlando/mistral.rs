@@ -64,6 +64,8 @@ pub struct GlobalOptionsToml {
     #[serde(default)]
     pub seed: Option<u64>,
     #[serde(default)]
+    pub sampling_rng: mistralrs_core::SamplingRng,
+    #[serde(default)]
     pub log: Option<PathBuf>,
     #[serde(default)]
     pub token_source: Option<String>,
@@ -223,6 +225,7 @@ impl GlobalOptionsToml {
 
         Ok(GlobalOptions {
             seed: self.seed,
+            sampling_rng: self.sampling_rng,
             log: self.log.clone(),
             token_source,
             verbose: 0,
@@ -301,6 +304,30 @@ impl ModelEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sampling_rng_config_uses_the_cli_enum() {
+        use mistralrs_core::SamplingRng;
+        for (setting, expected) in [
+            ("", SamplingRng::Isaac64),
+            ("sampling_rng = \"isaac64\"", SamplingRng::Isaac64),
+            (
+                "sampling_rng = \"keyed-threefry2x32-v1\"",
+                SamplingRng::KeyedThreefry2x32V1,
+            ),
+        ] {
+            let config: CliConfig =
+                toml::from_str(&format!("command = \"serve\"\n[global]\n{setting}\n")).unwrap();
+            let CliConfig::Serve(config) = config else {
+                panic!("expected serve config")
+            };
+            assert_eq!(
+                config.global.to_global_options().unwrap().sampling_rng,
+                expected
+            );
+        }
+        assert!(toml::from_str::<GlobalOptionsToml>("sampling_rng = \"typo\"").is_err());
+    }
 
     #[test]
     fn omitted_model_kind_defaults_to_auto() {

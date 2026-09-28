@@ -42,7 +42,7 @@ pub(crate) fn can_batch_greedy_device_verify(seqs: &[&mut Sequence]) -> bool {
 
 #[cfg(feature = "cuda")]
 fn sparse_rejection_plan(seq: &Sequence) -> Option<CudaSpeculativeSamplingPlan> {
-    if crate::sampler::keyed_sampling_enabled()
+    if seq.sampler().uses_keyed_rng()
         || seq.return_logprobs()
         || seq.sampling_logprob_required()
         || !stochastic_verification_allowed_for_sequence(seq)
@@ -1284,7 +1284,7 @@ async fn finish_verified_step_stochastic<P: Pipeline>(
         } else {
             (p_i / q_i).min(1.0)
         };
-        let draw = if crate::sampler::keyed_sampling_enabled() {
+        let draw = if seq.sampler().uses_keyed_rng() {
             seq.keyed_sampling_key.uniform(
                 mistralrs_keyed_rng::Purpose::Acceptance,
                 u32::try_from(seq.generated_len()).map_err(candle_core::Error::msg)?,
@@ -1327,7 +1327,7 @@ async fn finish_verified_step_stochastic<P: Pipeline>(
         if normalize_probs(&mut adjusted_probs).is_err() {
             adjusted_probs = target_probs.sampling;
         }
-        let sampled = if crate::sampler::keyed_sampling_enabled() {
+        let sampled = if seq.sampler().uses_keyed_rng() {
             sample_from_probs_with_uniform(
                 &sampler,
                 &adjusted_probs,
@@ -1383,7 +1383,7 @@ async fn finish_verified_step_stochastic<P: Pipeline>(
         seq.get_toks(),
         seq.prompt_tokens(),
     )?;
-    let continuation = if crate::sampler::keyed_sampling_enabled() {
+    let continuation = if seq.sampler().uses_keyed_rng() {
         sample_from_probs_with_uniform(
             &sampler,
             &target_probs.sampling,

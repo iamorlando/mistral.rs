@@ -1,0 +1,25 @@
+{
+  "batch": 8,
+  "steps": 8,
+  "readbacks": {
+    "model_keyed": 8
+  },
+  "kinds": {
+    "model_keyed": {
+      "candle_copy": 0,
+      "shared_records": 8
+    }
+  },
+  "tensor_elements": {
+    "model_keyed": []
+  },
+  "filter": "top1",
+  "dispatches": {
+    "model_keyed": {
+      "history_init": 8,
+      "logits_tiles": 8,
+      "logits_finish": 8,
+      "history_commit": 64
+    }
+  }
+}

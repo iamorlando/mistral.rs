@@ -1042,6 +1042,11 @@ impl RequestBuilder {
         self
     }
 
+    pub fn set_sampler_rng(mut self, sampling_rng: mistralrs_core::SamplingRng) -> Self {
+        self.sampling_params.sampling_rng = Some(sampling_rng);
+        self
+    }
+
     /// Set the sampling temperature. Higher values increase randomness.
     pub fn set_sampler_temperature(mut self, temperature: f64) -> Self {
         self.sampling_params.temperature = Some(temperature);

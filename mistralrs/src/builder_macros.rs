@@ -199,6 +199,11 @@ macro_rules! common_builder_methods {
             self
         }
 
+        pub fn with_sampling_rng(mut self, sampling_rng: mistralrs_core::SamplingRng) -> Self {
+            self.sampling_rng = sampling_rng;
+            self
+        }
+
         /// Set the maximum number of sequences which can be run at once.
         pub fn with_max_num_seqs(mut self, max_num_seqs: usize) -> Self {
             self.max_num_seqs = max_num_seqs;
