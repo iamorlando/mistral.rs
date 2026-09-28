@@ -1,5 +1,9 @@
 # Top-1 correction and existing Metal baseline
 
+The [batch residency and fused greedy report](../m2-max-fused-2026-09-27/README.md)
+supersedes this performance result. It fixes a further full-model batch transfer
+missed by the isolated sampler tests below and records release-build speedups.
+
 The earlier explanation overstated what this work removes. Existing Mistral
 Metal already reduces eligible single-sequence top-k requests on the GPU. The
 complete-model benchmark uses top-k 1 and reads four packed f32 values per token,

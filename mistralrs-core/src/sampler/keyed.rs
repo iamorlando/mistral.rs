@@ -24,6 +24,13 @@ pub(crate) fn keyed_sampling_enabled() -> bool {
 
 impl Sampler {
     #[cfg(feature = "metal")]
+    pub(crate) fn can_sample_keyed_argmax(&self) -> bool {
+        self.can_sample_keyed_metal()
+            && self.logits_bias.is_empty()
+            && (self.temperature.is_none() || self.top_k == 1)
+    }
+
+    #[cfg(feature = "metal")]
     pub(crate) fn keyed_metal_batch_compatible(&self, other: &Self) -> bool {
         self.can_sample_keyed_metal()
             && other.can_sample_keyed_metal()
@@ -333,7 +340,33 @@ impl crate::sequence::Sequence {
         selection: &mistralrs_keyed_rng::metal::Selection,
         eos: Option<&[u32]>,
     ) -> Result<()> {
-        let stops = if self
+        let stops = self.keyed_stop_tokens(eos);
+        self.keyed_history
+            .as_mut()
+            .unwrap()
+            .commit_with_stop_tokens(selection, &stops)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "metal")]
+    pub(crate) fn submit_keyed_argmax_and_commit(
+        &mut self,
+        logits: &Tensor,
+        max_model_len: usize,
+        eos: Option<&[u32]>,
+    ) -> Result<mistralrs_keyed_rng::metal::Selection> {
+        self.prepare_keyed_metal_history(logits, max_model_len)?;
+        let params = self.sampler().keyed_metal_params(self.keyed_sampling_key);
+        let stops = self.keyed_stop_tokens(eos);
+        self.keyed_history
+            .as_mut()
+            .unwrap()
+            .sample_argmax_and_commit(logits, params, &stops)
+    }
+
+    #[cfg(feature = "metal")]
+    fn keyed_stop_tokens(&self, eos: Option<&[u32]>) -> Vec<u32> {
+        if self
             .tool_call_state
             .as_ref()
             .is_some_and(|state| state.required_tool_call_unsatisfied())
@@ -345,11 +378,6 @@ impl crate::sequence::Sequence {
                 .copied()
                 .chain(eos.unwrap_or_default().iter().copied())
                 .collect::<Vec<_>>()
-        };
-        self.keyed_history
-            .as_mut()
-            .unwrap()
-            .commit_with_stop_tokens(selection, &stops)?;
-        Ok(())
+        }
     }
 }

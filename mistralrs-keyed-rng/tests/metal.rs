@@ -14,6 +14,83 @@ const LOGPROB_TOLERANCE: f64 = 2e-5;
 const BATCH_TEST_VOCAB: usize = 2051;
 
 #[test]
+fn fused_argmax_commit_matches_penalties_and_preserves_queued_outputs() -> Result<()> {
+    let device = Device::new_metal(0)?;
+    let params = || LogitsSampling {
+        key: SequenceKey::new(42),
+        attempt: 0,
+        temperature: 0.8,
+        frequency: 0.1,
+        presence: 0.3,
+        repetition: 1.1,
+        min_p: 0.0,
+        greedy: true,
+    };
+    for vocab in [1, 31, 33, 1025, 32771, 131072] {
+        let values = (0..vocab)
+            .map(|i| ((i * 17) % 101) as f32 / 17.0 - 3.0)
+            .collect::<Vec<_>>();
+        let logits = Tensor::new(values.as_slice(), &device)?;
+        let mut history = DeviceHistory::new(&[0], 1, FUSED_STEPS + 1, vocab, &device)?;
+        let mut selections = Vec::new();
+        let mut expected = vec![0u32];
+        let mut generated = vec![0u32; vocab];
+        for _ in 0..FUSED_STEPS {
+            let token = (0..vocab)
+                .max_by(|&a, &b| {
+                    let score = |i: usize| {
+                        let mut v = values[i]
+                            - 0.1 * generated[i] as f32
+                            - if generated[i] > 0 { 0.3 } else { 0.0 };
+                        if i == 0 || generated[i] > 0 {
+                            v = if v >= 0.0 { v / 1.1 } else { v * 1.1 };
+                        }
+                        v * 1.25
+                    };
+                    score(a).total_cmp(&score(b)).then_with(|| b.cmp(&a))
+                })
+                .unwrap();
+            expected.push(token as u32);
+            generated[token] += 1;
+            selections.push(history.sample_argmax_and_commit(&logits, params(), &[])?);
+        }
+        let sampled = mistralrs_keyed_rng::metal::Selection::readback_batch(
+            &selections.iter().collect::<Vec<_>>(),
+        )?;
+        for (selection, (&token, result)) in
+            selections.iter().zip(expected[1..].iter().zip(sampled))
+        {
+            assert_eq!(result?, (token, 0.0));
+            assert_eq!(selection.tokens().flatten_all()?.to_vec1::<u32>()?, [token]);
+        }
+        assert_eq!(history.tokens()?.to_vec1::<u32>()?, expected);
+        assert_eq!(
+            history.state().to_vec1::<u32>()?,
+            [FUSED_STEPS as u32 + 1, FUSED_STEPS as u32, 0]
+        );
+    }
+    let logits = Tensor::new(&[0.0f32, 2.0], &device)?;
+    let mut history = DeviceHistory::new(&[0], 1, 4, 2, &device)?;
+    for _ in 0..2 {
+        let selected = history.sample_argmax_and_commit(&logits, params(), &[1])?;
+        assert_eq!(selected.readback()?[0], (1, 0.0));
+        assert_eq!(history.state().to_vec1::<u32>()?, [2, 1, 0]);
+    }
+    for values in [
+        [f32::NAN, 0.0],
+        [0.0, f32::INFINITY],
+        [f32::NEG_INFINITY; 2],
+    ] {
+        let logits = Tensor::new(&values, &device)?;
+        let mut history = DeviceHistory::new(&[0], 1, 4, 2, &device)?;
+        let selected = history.sample_argmax_and_commit(&logits, params(), &[])?;
+        assert!(selected.readback().is_err());
+        assert_eq!(history.state().to_vec1::<u32>()?, [1, 0, 1]);
+    }
+    Ok(())
+}
+
+#[test]
 fn batched_history_survives_reordering_splits_and_joining() -> Result<()> {
     let device = Device::new_metal(0)?;
     let schedule: &[&[usize]] = &[

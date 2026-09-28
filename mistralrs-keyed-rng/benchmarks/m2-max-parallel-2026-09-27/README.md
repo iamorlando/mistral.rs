@@ -10,6 +10,11 @@ top-k path, and the matrix omitted that path as a separate baseline. The keyed
 implementation also failed to specialize top-k 1 and unnecessarily ran a full
 softmax and block sort. See the [corrected top-1 report](../m2-max-top1-2026-09-27/README.md).
 
+Further correction: these batch sampler timings did not exercise the model
+forward boundary. Its CUDA-only preservation check still downloaded Metal batch
+logits before sampling. The [fused sampling and batch residency report](../m2-max-fused-2026-09-27/README.md)
+records the fix and full-model batch-eight audits and throughput.
+
 The severe slowdown in the earlier report was introduced by the original keyed
 selector, which scanned a vocabulary in one GPU thread per sequence. It was not
 evidence that Mistral's existing Metal model execution lacked parallelism.

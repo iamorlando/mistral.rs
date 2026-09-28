@@ -1755,7 +1755,7 @@ impl Sequence {
         self.return_logprobs
     }
 
-    #[cfg(feature = "cuda")]
+    #[cfg(any(feature = "cuda", feature = "metal"))]
     pub(crate) fn sampling_logprob_required(&self) -> bool {
         get_mut_group!(self).sampling_logprob_required()
     }
@@ -2329,7 +2329,7 @@ impl SequenceGroup {
         &self.choices
     }
 
-    #[cfg(feature = "cuda")]
+    #[cfg(any(feature = "cuda", feature = "metal"))]
     fn sampling_logprob_required(&self) -> bool {
         self.n_choices > 1 || self.best_of.is_some_and(|best_of| best_of > 1)
     }

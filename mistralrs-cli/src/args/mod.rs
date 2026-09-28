@@ -808,6 +808,10 @@ impl AgentCliOptions {
 
 #[derive(clap::Args, Clone, Default)]
 pub struct BenchRuntimeOptions {
+    /// Number of parallel completion choices in each benchmark request.
+    #[arg(long, default_value_t = 1)]
+    pub batch_size: usize,
+
     /// Disable KV cache entirely
     #[arg(long)]
     pub no_kv_cache: bool,

@@ -1,0 +1,140 @@
+{
+  "date": "2026-09-27",
+  "candle_revision": "66a8cf184a5a519671454066b1b9efd446ec9f5c",
+  "keyed_rngs_revision": "9269c77b9bd0095688f93fa6d9e97624211c883b",
+  "cpu": "Apple M2 Max",
+  "gpu": "Apple M2 Max",
+  "logical_cpu_count": 12,
+  "memory_bytes": 68719476736,
+  "macos_version": "27.0",
+  "macos_build": "26A428",
+  "rustc": "1.96.0 (ac68faa20 2026-05-25)",
+  "cargo_profile": "sampling tests: opt-level=3, debug assertions; full-model throughput: release",
+  "rustflags": "-C target-cpu=native, from .cargo/config.toml",
+  "features": [
+    "metal",
+    "accelerate"
+  ],
+  "dtype": "f32",
+  "rayon_num_threads_env": null,
+  "candle_metal_compute_per_buffer_env": null,
+  "warmup_steps_per_mode": 8,
+  "timed_steps_per_repeat": 32,
+  "repetitions": 5,
+  "mode_order": "rotates by one per repetition",
+  "prompt_length": 128,
+  "seed": 42,
+  "sequence_seed": "42 + batch row",
+  "temperature": 0.8,
+  "vocabularies": [
+    32768,
+    131072
+  ],
+  "batches": [
+    1,
+    8
+  ],
+  "filters": [
+    "greedy",
+    "top1",
+    "categorical",
+    "topk40_p90"
+  ],
+  "penalties": false,
+  "full_logprobs": false,
+  "model_forward": false,
+  "initial_uploads_timed": false,
+  "gpu_completion_timed": true,
+  "post_run_validation_timed": false,
+  "source_base": "43f689162d864d560a607192a056bf6efedc7367",
+  "source_sha256": {
+    "mistralrs-keyed-rng/src/metal.rs": "28b871b67b47b7717876f7d8dc1525f49a3a5e3bd1620fd962d5f0aa99739cc8",
+    "mistralrs-keyed-rng/src/selection.metal": "f59105d71ff2246ef25105119b06fe58c1caf503e87be8ccbea4ced5609b0c6f",
+    "mistralrs-keyed-rng/src/sampling.metal": "966c69f635c296600806a2377808b45a6321beaa4607ff82871081c1d64256ae",
+    "mistralrs-keyed-rng/src/argmax.metal": "2b69dad3c28c45be1b4674bce9c15a46e285d217aabca5fefc26c18ae0c22d93",
+    "mistralrs-keyed-rng/src/topk.metal": "5054fd80e03251ef840f520105466f7f7e4b2dc2b99c5c718f0bc40a805e49da",
+    "mistralrs-core/src/sampler/keyed.rs": "b21a0c75427e0f233652be40b4b1e8df069f3bb0ee524b610324cff9e0687b3d",
+    "mistralrs-core/src/sampler/keyed_bench.rs": "4212402c3a5509ab5e764bafac30b3b6cbfdda43c6eb424f559caca1bbc703e0",
+    "mistralrs-core/src/pipeline/sampling.rs": "1fdcd1bc3ee1725f0dc34ddb8d0ad2b1d6724e93c43c8c0a72926a26374e2e35",
+    "mistralrs-core/src/pipeline/mod.rs": "5d5c0e4fe349e28154d6ffb6cbf77fe47822b6376f8c1cfe409fcf5874a4c00a",
+    "mistralrs-core/src/sequence.rs": "71e27750267c23ff9eb42c33c133f49c870ed09df20169aef622c7d2c3c28d1e",
+    "mistralrs-cli/src/commands/bench.rs": "14d47a4f13f20fe73bd15ef129a98752d45367550d87c88c9a6a9801b209730a",
+    "mistralrs-cli/src/args/mod.rs": "ba62289f3a45dee30c47152c642ae877621926d451ff717c4ce3b555d11b8fc5",
+    "scripts/benchmark_keyed_model.py": "731c81ac295adc441bf99df9551ab1639cbc9bbf4ba7c89f8eb0db29d392262a",
+    "scripts/audit_keyed_readbacks.py": "c18de8f8b48aa26e91731f965d9f0d7d95bf24f9b01a3cec50a864f576ed83ff",
+    "mistralrs-keyed-rng/tests/metal.rs": "5a8f60c7598aded00bc9926e0f78a1fba5170b895ad7e37cd02148c46f7694b3"
+  },
+  "model": {
+    "id": "HuggingFaceTB/SmolLM2-135M-Instruct",
+    "revision": "12fd25f77366fa6b3b4b768ec3050bf629380bac",
+    "model_safetensors_sha256": "5af571cbf074e6d21a03528d2330792e532ca608f24ac70a143f6b369968ab8c",
+    "dtype": "f32",
+    "layers": 30,
+    "vocabulary": 49152,
+    "depths": [
+      128,
+      512
+    ],
+    "generated_tokens": 128,
+    "warmups": 2,
+    "repetitions": 5,
+    "greedy": true,
+    "paged_attention": false,
+    "rounds": 5,
+    "sampler_top_k": 1,
+    "sampler_effective_temperature": 1.0,
+    "before_source": "43f689162d864d560a607192a056bf6efedc7367",
+    "cargo_profile": "release: opt-level=3, no debug assertions",
+    "studies": {
+      "model": {
+        "batch_size": 1,
+        "rounds": 5,
+        "modes": [
+          "metal_legacy",
+          "metal_keyed_before",
+          "metal_keyed"
+        ],
+        "stage": "fused sampler before batched model residency fix"
+      },
+      "model-b8": {
+        "batch_size": 8,
+        "rounds": 5,
+        "modes": [
+          "metal_legacy",
+          "metal_keyed"
+        ],
+        "stage": "final batch residency fix"
+      },
+      "model-b8-cpu": {
+        "batch_size": 8,
+        "rounds": 1,
+        "modes": [
+          "cpu_legacy",
+          "metal_legacy",
+          "metal_keyed"
+        ],
+        "stage": "final batch residency fix"
+      }
+    },
+    "mode_order": "rotates by one between rounds; exact process order in each study/model-results.json",
+    "batch_definition": "n_choices completions sharing one prompt; aggregate decode throughput",
+    "binary_sha256_by_study": {
+      "model": {
+        "current": "d4aecca2637de4a702c219382686d19b17f0e76db1fb13eb8d1bb34f248ad965",
+        "before": "86eef4566a3e70b67bc5acacee3c84f4cedc164569ab107e4687dd617d391982"
+      },
+      "model-b8": {
+        "current": "edd2eeff14b5bb8f9709322de97e4af806361a94a043612fb53f1c074ccfff2c"
+      },
+      "model-b8-cpu": {
+        "current": "edd2eeff14b5bb8f9709322de97e4af806361a94a043612fb53f1c074ccfff2c"
+      }
+    },
+    "debug_audit_binary_sha256": "70ff6a117238cdd384f4eae74eeab1b23a0e39a3cfb13c361859c82a8d3db10a",
+    "kv_cache_dtype": {
+      "cpu": "f16 (default optimized CPU KV storage, f32 accumulation)",
+      "metal": "f32"
+    }
+  },
+  "sampling_source_stage": "final sampler kernels and benchmark harness; before model batch residency fix, which the isolated sampler does not exercise"
+}

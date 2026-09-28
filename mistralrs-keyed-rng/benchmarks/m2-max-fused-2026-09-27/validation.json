@@ -1,0 +1,51 @@
+{
+  "cargo_check_metal_accelerate": "passed: cargo check -p mistralrs-cli --features metal,accelerate",
+  "cargo_check_cpu": "passed: cargo check -p mistralrs-cli -p mistralrs-keyed-rng",
+  "cargo_fmt": "passed: cargo fmt --all -- --check",
+  "cargo_clippy": "passed: cargo clippy -p mistralrs-keyed-rng --features metal --tests -- -D warnings",
+  "python_compile": "passed for scripts/benchmark_keyed_model.py and scripts/audit_keyed_readbacks.py",
+  "keyed_metal_tests": {
+    "passed": 11,
+    "ignored_manual_benchmark": 1
+  },
+  "core_keyed_metal_tests": {
+    "passed": 5,
+    "environment": "MISTRALRS_SAMPLING_RNG=keyed-threefry2x32-v1",
+    "stage": "after final batch residency fix"
+  },
+  "cli_tests": {
+    "batched_measurement_waits_for_every_choice": "passed",
+    "cli_reference_matches_committed": "passed",
+    "regenerate_cli_reference": "passed"
+  },
+  "sampling_matrix": {
+    "passed": true,
+    "observations": 560,
+    "groups": 112
+  },
+  "model_runs": {
+    "single_stream_release": 15,
+    "batch_eight_release": 10,
+    "batch_eight_cpu_comparison_release": 3,
+    "depths_per_run": 2,
+    "measured_iterations_per_depth": 5,
+    "warmups_per_depth": 2
+  },
+  "readback_audits": {
+    "top1_single_row_sampler_with_dispatches": "passed",
+    "model_keyed_single_row_with_dispatches": "passed",
+    "model_reference_single_row": "passed",
+    "model_keyed_batch_eight_with_dispatches": "passed",
+    "model_reference_batch_eight": "passed"
+  },
+  "audit_boundaries": "Candle Metal storage-to-CPU copies (counts and element sizes), keyed shared-result reads, and optional keyed kernel dispatches",
+  "timing_isolation": "Debugger audits, builds, and sampling/model timings from this task ran separately",
+  "limitations": [
+    "Measured full-model workload is pinned SmolLM2-135M-Instruct with greedy decoding and paged attention off.",
+    "Batch eight means eight completion choices sharing one prompt.",
+    "Single-stream model difference is below 0.4%; no substantial single-stream speedup established.",
+    "Top-k40/p0.9 sampler cases still regress at batch one and 32K batch eight.",
+    "Serving retains one compact host read boundary per batch step; only the isolated queued sampler has zero intermediate host reads.",
+    "CPU uses optimized default f16 KV storage with f32 accumulation; Metal KV tensors are f32."
+  ]
+}

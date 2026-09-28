@@ -107,6 +107,7 @@ impl Case {
         let start = Instant::now();
         for position in 0..steps {
             if matches!(mode, "metal_compact" | "metal_queued") {
+                let fused_argmax = self.batch == 1 && self.sampler.can_sample_keyed_argmax();
                 let selections = if self.batch > 1 {
                     let params = keys
                         .iter()
@@ -119,6 +120,12 @@ impl Case {
                         &params,
                         self.sampler.keyed_metal_filter(),
                     )?
+                } else if fused_argmax {
+                    vec![histories[0].sample_argmax_and_commit(
+                        &metal_rows[0],
+                        self.sampler.keyed_metal_params(keys[0]),
+                        &[],
+                    )?]
                 } else {
                     let mut selections = Vec::with_capacity(self.batch);
                     for row in 0..self.batch {
@@ -135,8 +142,10 @@ impl Case {
                     }
                     selections
                 };
-                for (history, selection) in histories.iter_mut().zip(&selections) {
-                    history.commit_with_stop_tokens(selection, &[])?;
+                if !fused_argmax {
+                    for (history, selection) in histories.iter_mut().zip(&selections) {
+                        history.commit_with_stop_tokens(selection, &[])?;
+                    }
                 }
                 if mode == "metal_compact" {
                     let refs = selections.iter().collect::<Vec<_>>();

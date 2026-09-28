@@ -50,6 +50,11 @@ struct BenchMeasurement {
     decode_intervals: usize,
 }
 
+struct BenchRequestOptions {
+    adapter: Option<String>,
+    batch_size: usize,
+}
+
 const BENCH_TOKEN_BASE: u32 = 1000;
 const BENCH_TOKEN_SPAN: u32 = 2048;
 const BENCH_ITER_STRIDE: u32 = 131;
@@ -103,6 +108,9 @@ pub async fn run_bench(
     if iterations == 0 {
         anyhow::bail!("--iterations must be greater than 0");
     }
+    if runtime.batch_size == 0 {
+        anyhow::bail!("--batch-size must be greater than 0");
+    }
     if prompt_lens.iter().all(|prompt_len| *prompt_len == 0) && gen_len <= 1 {
         anyhow::bail!("benchmark must enable at least one TTFT or decode measurement");
     }
@@ -137,7 +145,7 @@ pub async fn run_bench(
     // Build using the same infrastructure as serve
     let mut builder = MistralRsForServerBuilder::new()
         .with_model(model_selected)
-        .with_max_seqs(1) // Single sequence for benchmarking
+        .with_max_seqs(runtime.batch_size)
         .with_no_kv_cache(runtime.no_kv_cache)
         .with_token_source(global.token_source)
         .with_interactive_mode(false)
@@ -197,6 +205,11 @@ pub async fn run_bench(
         }
     }
     info!("Model loaded.");
+    info!("Benchmark batch size: {}", runtime.batch_size);
+    let request_options = BenchRequestOptions {
+        adapter: request_adapter.clone(),
+        batch_size: runtime.batch_size,
+    };
 
     if warmup > 0 {
         info!("Running {warmup} warmup iteration(s) per benchmark case...");
@@ -206,28 +219,15 @@ pub async fn run_bench(
             }
             for i in 0..warmup {
                 let token_start = bench_token_start(i, prompt_idx, 0);
-                run_single_bench(
-                    &mistralrs,
-                    prompt_len,
-                    1,
-                    token_start,
-                    request_adapter.clone(),
-                )
-                .await?;
+                run_single_bench(&mistralrs, prompt_len, 1, token_start, &request_options).await?;
             }
         }
         if gen_len > 1 {
             for (depth_idx, depth) in depths.iter().copied().enumerate() {
                 for i in 0..warmup {
                     let token_start = bench_token_start(i, depth_idx, prompt_lens.len());
-                    run_single_bench(
-                        &mistralrs,
-                        depth,
-                        gen_len,
-                        token_start,
-                        request_adapter.clone(),
-                    )
-                    .await?;
+                    run_single_bench(&mistralrs, depth, gen_len, token_start, &request_options)
+                        .await?;
                 }
             }
         }
@@ -267,17 +267,11 @@ pub async fn run_bench(
                 continue;
             }
             let token_start = bench_token_start(i + warmup, prompt_idx, 0);
-            let measurement = run_single_bench(
-                &mistralrs,
-                *prompt_len,
-                1,
-                token_start,
-                request_adapter.clone(),
-            )
-            .await?;
+            let measurement =
+                run_single_bench(&mistralrs, *prompt_len, 1, token_start, &request_options).await?;
             let ttft_seconds = measurement.time_to_first_token.as_secs_f32();
             let tok_per_sec = if ttft_seconds > 0.0 {
-                *prompt_len as f32 / ttft_seconds
+                (*prompt_len * runtime.batch_size) as f32 / ttft_seconds
             } else {
                 0.0
             };
@@ -290,14 +284,9 @@ pub async fn run_bench(
         if gen_len > 1 {
             for (depth_idx, (depth, results)) in decode_results.iter_mut().enumerate() {
                 let token_start = bench_token_start(i + warmup, depth_idx, prompt_lens.len());
-                let measurement = run_single_bench(
-                    &mistralrs,
-                    *depth,
-                    gen_len,
-                    token_start,
-                    request_adapter.clone(),
-                )
-                .await?;
+                let measurement =
+                    run_single_bench(&mistralrs, *depth, gen_len, token_start, &request_options)
+                        .await?;
                 let decode_seconds = measurement.decode_duration.as_secs_f32();
                 let tok_per_sec = if decode_seconds > 0.0 {
                     measurement.decode_intervals as f32 / decode_seconds
@@ -359,7 +348,13 @@ pub async fn run_bench(
     }
 
     // Print results
-    print_results(&model_id, request_adapter.as_deref(), iterations, &results);
+    print_results(
+        &model_id,
+        request_adapter.as_deref(),
+        iterations,
+        runtime.batch_size,
+        &results,
+    );
 
     Ok(())
 }
@@ -384,10 +379,11 @@ async fn run_single_bench(
     prompt_tokens: usize,
     gen_tokens: usize,
     token_start: u32,
-    adapter: Option<String>,
+    options: &BenchRequestOptions,
 ) -> Result<BenchMeasurement> {
     let mut sampling_params = SamplingParams::deterministic();
     sampling_params.max_len = Some(gen_tokens);
+    sampling_params.n_choices = options.batch_size;
 
     let sender = mistralrs.get_sender(None).unwrap();
     let (tx, mut rx) = channel(100);
@@ -422,7 +418,7 @@ async fn run_single_bench(
         max_tool_rounds: None,
         tool_dispatch_url: None,
         model_id: None,
-        adapter: adapter.map(AdapterSelection::alias),
+        adapter: options.adapter.clone().map(AdapterSelection::alias),
         truncate_sequence: false,
         files: None,
         input_files: Vec::new(),
@@ -431,7 +427,7 @@ async fn run_single_bench(
     let request_start = Instant::now();
     sender.send(req).await?;
 
-    recv_measurement(&mut rx, request_start, gen_tokens).await
+    recv_measurement(&mut rx, request_start, gen_tokens, options.batch_size).await
 }
 
 fn bench_tokens(prompt_tokens: usize, token_start: u32) -> Vec<u32> {
@@ -444,8 +440,10 @@ async fn recv_measurement(
     rx: &mut tokio::sync::mpsc::Receiver<Response>,
     request_start: Instant,
     expected_tokens: usize,
+    batch_size: usize,
 ) -> Result<BenchMeasurement> {
     let mut first_token = None;
+    let mut finished = vec![false; batch_size];
 
     let last_token = loop {
         match rx.recv().await {
@@ -454,14 +452,15 @@ async fn recv_measurement(
             Some(Response::File(_)) => continue,
             Some(Response::CompletionChunk(response)) => {
                 let received = Instant::now();
-                let finished = response
-                    .choices
-                    .iter()
-                    .any(|choice| choice.finish_reason.is_some());
+                for choice in &response.choices {
+                    if choice.finish_reason.is_some() {
+                        finished[choice.index] = true;
+                    }
+                }
                 if !response.choices.is_empty() {
                     first_token.get_or_insert(received);
                 }
-                if finished {
+                if finished.iter().all(|done| *done) {
                     break received;
                 }
             }
@@ -478,7 +477,7 @@ async fn recv_measurement(
     Ok(BenchMeasurement {
         time_to_first_token: first_token.duration_since(request_start),
         decode_duration: last_token.duration_since(first_token),
-        decode_intervals: expected_tokens.saturating_sub(1),
+        decode_intervals: expected_tokens.saturating_sub(1) * batch_size,
     })
 }
 
@@ -488,6 +487,7 @@ fn print_results(
     model_id: &str,
     adapter: Option<&str>,
     iterations: usize,
+    batch_size: usize,
     results: &[BenchResult],
 ) {
     println!();
@@ -497,6 +497,7 @@ fn print_results(
     println!("Model: {}", model_id);
     println!("Adapter: {}", adapter.unwrap_or("base"));
     println!("Iterations: {}", iterations);
+    println!("Batch size: {}", batch_size);
     println!();
 
     let mut table = Table::new();
@@ -525,4 +526,37 @@ fn print_results(
 
     println!("{table}");
     println!();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mistralrs_core::{CompletionChunkChoice, CompletionChunkResponse};
+
+    #[tokio::test]
+    async fn batched_measurement_waits_for_every_choice() -> Result<()> {
+        let (tx, mut rx) = channel(3);
+        for (index, finish) in [(0, true), (1, false), (1, true)] {
+            tx.send(Response::CompletionChunk(CompletionChunkResponse {
+                id: "bench".into(),
+                choices: vec![CompletionChunkChoice {
+                    text: "x".into(),
+                    index,
+                    logprobs: None,
+                    finish_reason: finish.then(|| "length".into()),
+                }],
+                created: 0,
+                model: "test".into(),
+                system_fingerprint: String::new(),
+                object: "text_completion".into(),
+                adapter_generation: None,
+            }))
+            .await?;
+        }
+        drop(tx);
+        let measurement = recv_measurement(&mut rx, Instant::now(), 3, 2).await?;
+        assert_eq!(measurement.decode_intervals, 4);
+        assert!(rx.try_recv().is_err());
+        Ok(())
+    }
 }

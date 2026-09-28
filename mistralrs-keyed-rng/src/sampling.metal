@@ -67,21 +67,31 @@ kernel void history_init(device const uint* tokens [[buffer(0)]],
     state[2] = 1;
 }
 
+struct HistoryCommit {
+    device const uint* stops;
+    device uint* history;
+    device uint* counts;
+    device uint* state;
+    uint4 dims;
+    void apply(uint token) const {
+        if (state[2] == 0 || state[0] >= dims.y) return;
+        history[state[0]++] = token;
+        state[1] += 1;
+        if (token < dims.x) {
+            counts[token] += 1;
+            counts[dims.x + token] += 1;
+        }
+        for (uint i = 0; i < dims.z; ++i) if (stops[i] == token) state[2] = 0;
+        if (state[0] >= dims.y) state[2] = 0;
+    }
+};
+
 kernel void history_commit(device const uint* records [[buffer(0)]],
                            device const uint* stops [[buffer(1)]],
                            device uint* history [[buffer(2)]],
                            device uint* counts [[buffer(3)]],
                            device uint* state [[buffer(4)]], constant uint4& dims [[buffer(5)]]) {
-    if (records[2] != 0 || state[2] == 0 || state[0] >= dims.y) return;
-    uint token = records[0];
-    history[state[0]++] = token;
-    state[1] += 1;
-    if (token < dims.x) {
-        counts[token] += 1;
-        counts[dims.x + token] += 1;
-    }
-    for (uint i = 0; i < dims.z; ++i) if (stops[i] == token) state[2] = 0;
-    if (state[0] >= dims.y) state[2] = 0;
+    if (records[2] == 0) HistoryCommit {stops, history, counts, state, dims}.apply(records[0]);
 }
 
 kernel void history_penalties(device const float* logits [[buffer(0)]],

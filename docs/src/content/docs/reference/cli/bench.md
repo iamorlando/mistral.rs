@@ -58,6 +58,7 @@ mistralrs bench [OPTIONS] [COMMAND]
 | `--max-edge <MAX_EDGE>` |  | Maximum edge length for image resizing (aspect ratio preserved) |
 | `--max-num-images <MAX_NUM_IMAGES>` |  | Maximum number of images per request |
 | `--max-image-length <MAX_IMAGE_LENGTH>` |  | Maximum image dimension for device mapping |
+| `--batch-size <BATCH_SIZE>` | `1` | Number of parallel completion choices in each benchmark request |
 | `--no-kv-cache` | `false` | Disable KV cache entirely |
 | `--matformer-config-path <MATFORMER_CONFIG_PATH>` |  | Path to a MatFormer config (CSV/JSON describing available slices). See model card |
 | `--matformer-slice-name <MATFORMER_SLICE_NAME>` |  | MatFormer slice to load (must match a slice name in the config file) |

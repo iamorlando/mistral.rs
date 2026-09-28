@@ -28,7 +28,9 @@ const SOURCE: &str = concat!(
     "\n",
     include_str!("topk.metal"),
     "\n",
-    include_str!("sampling.metal")
+    include_str!("sampling.metal"),
+    "\n",
+    include_str!("argmax.metal")
 );
 type Pipelines = HashMap<(u64, &'static str), ComputePipeline>;
 static PIPELINES: LazyLock<Mutex<Pipelines>> = LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -53,7 +55,13 @@ fn pipeline(device: &Device, name: &'static str) -> Result<ComputePipeline> {
         .map_err(Error::wrap)?;
     if matches!(
         name,
-        "rng_select" | "rng_logits" | "logits_tiles" | "logits_finish" | "candidates_topk_blocks"
+        "rng_select"
+            | "rng_logits"
+            | "logits_tiles"
+            | "logits_finish"
+            | "candidates_topk_blocks"
+            | "argmax_tiles"
+            | "argmax_finish_commit"
     ) && pipeline.as_ref().threadExecutionWidth() != SIMD_WIDTH
     {
         candle_core::bail!("keyed Metal sampling requires 32-lane SIMD groups");
@@ -156,6 +164,8 @@ fn dispatch(
                         | "logits_tiles"
                         | "logits_finish"
                         | "candidates_topk_blocks"
+                        | "argmax_tiles"
+                        | "argmax_finish_commit"
                 ) {
                     SELECT_THREADS
                 } else {
@@ -405,16 +415,51 @@ pub struct DeviceHistory {
     vocab: usize,
     stop_tokens: (Vec<u32>, Tensor),
     batch: Option<(Arc<HistoryBatch>, usize)>,
+    scratch: Mutex<Option<LogitsScratch>>,
 }
 
 struct HistoryBatch {
     counts: Tensor,
     state: Tensor,
     rows: usize,
+    scratch: Mutex<Option<LogitsScratch>>,
+}
+
+struct LogitsScratch {
+    tiles: Tensor,
+    weights: Option<Tensor>,
+}
+
+impl LogitsScratch {
+    fn prepare<'a>(
+        slot: &'a mut Option<Self>,
+        device: &Device,
+        rows: usize,
+        width: usize,
+    ) -> Result<&'a mut Self> {
+        if slot.is_none() {
+            *slot = Some(Self {
+                tiles: allocate(
+                    device,
+                    (rows * width.div_ceil(LOGITS_TILE), LOGIT_TILE_WIDTH),
+                    DType::F32,
+                )?,
+                weights: None,
+            });
+        }
+        Ok(slot.as_mut().unwrap())
+    }
+
+    fn weights(&mut self, rows: usize, width: usize) -> Result<Tensor> {
+        if self.weights.is_none() {
+            self.weights = Some(allocate(self.tiles.device(), (rows, width), DType::F32)?);
+        }
+        Ok(self.weights.as_ref().unwrap().clone())
+    }
 }
 
 impl DeviceHistory {
-    fn batch_tensors(histories: &mut [&mut Self]) -> Result<(Tensor, Tensor)> {
+    fn batch_tensors(histories: &mut [&mut Self]) -> Result<Arc<HistoryBatch>> {
         if let Some((batch, _)) = &histories[0].batch {
             if batch.rows == histories.len()
                 && histories.iter().enumerate().all(|(row, history)| {
@@ -424,7 +469,7 @@ impl DeviceHistory {
                         .is_some_and(|(other, index)| *index == row && Arc::ptr_eq(batch, other))
                 })
             {
-                return Ok((batch.counts.clone(), batch.state.clone()));
+                return Ok(batch.clone());
             }
         }
         let counts = Tensor::cat(&histories.iter().map(|h| &h.counts).collect::<Vec<_>>(), 0)?;
@@ -433,13 +478,14 @@ impl DeviceHistory {
             counts,
             state,
             rows: histories.len(),
+            scratch: Mutex::new(None),
         });
         for (row, history) in histories.iter_mut().enumerate() {
             history.counts = batch.counts.narrow(0, row * 2, 2)?;
             history.state = batch.state.narrow(0, row * STATE_WIDTH, STATE_WIDTH)?;
             history.batch = Some((batch.clone(), row));
         }
-        Ok((batch.counts.clone(), batch.state.clone()))
+        Ok(batch)
     }
 
     pub fn sample_batch(
@@ -469,7 +515,9 @@ impl DeviceHistory {
         {
             candle_core::bail!("invalid batched Metal sampling inputs");
         }
-        let (counts, state) = Self::batch_tensors(histories)?;
+        let batch = Self::batch_tensors(histories)?;
+        let counts = &batch.counts;
+        let state = &batch.state;
         let floats = params
             .iter()
             .flat_map(|p| [p.temperature.recip(), p.frequency, p.presence, p.repetition])
@@ -479,12 +527,10 @@ impl DeviceHistory {
             && !(filter.min_p > 0.0 && filter.min_p < 1.0);
         if filter.greedy || unfiltered {
             let tile_count = width.div_ceil(LOGITS_TILE);
-            let weights = allocate(logits.device(), (rows, width), DType::F32)?;
-            let tiles = allocate(
-                logits.device(),
-                (rows * tile_count, LOGIT_TILE_WIDTH),
-                DType::F32,
-            )?;
+            let mut scratch = batch.scratch.lock().map_err(Error::msg)?;
+            let scratch = LogitsScratch::prepare(&mut scratch, logits.device(), rows, width)?;
+            let weights = scratch.weights(rows, width)?;
+            let tiles = &scratch.tiles;
             let records = allocate_records(logits.device(), rows)?;
             let tokens = allocate(logits.device(), (rows, 1), DType::U32)?;
             let ints = params
@@ -502,15 +548,15 @@ impl DeviceHistory {
                 .collect::<Vec<_>>();
             dispatch(
                 "logits_tiles",
-                &[logits, &counts],
-                &[&weights, &tiles],
+                &[logits, counts],
+                &[&weights, tiles],
                 &[width as u32],
                 &floats,
                 rows * tile_count * SELECT_THREADS,
             )?;
             dispatch(
                 "logits_finish",
-                &[&weights, &tiles, &state],
+                &[&weights, tiles, state],
                 &[&records, &tokens],
                 &ints,
                 &[],
@@ -529,7 +575,7 @@ impl DeviceHistory {
             .collect::<Vec<_>>();
         dispatch(
             "batch_logits",
-            &[logits, &counts, &state],
+            &[logits, counts, state],
             &[&scores, &events],
             &ints,
             &floats,
@@ -561,12 +607,14 @@ impl DeviceHistory {
         let key = params.key.words(Purpose::Generation);
         if params.greedy || !(params.min_p > 0.0 && params.min_p < 1.0) {
             let tile_count = self.vocab.div_ceil(LOGITS_TILE);
-            let weights = allocate(logits.device(), self.vocab, DType::F32)?;
-            let tiles = allocate(logits.device(), (tile_count, LOGIT_TILE_WIDTH), DType::F32)?;
+            let mut scratch = self.scratch.lock().map_err(Error::msg)?;
+            let scratch = LogitsScratch::prepare(&mut scratch, logits.device(), 1, self.vocab)?;
+            let weights = scratch.weights(1, self.vocab)?;
+            let tiles = &scratch.tiles;
             dispatch(
                 "logits_tiles",
                 &[logits, &self.counts],
-                &[&weights, &tiles],
+                &[&weights, tiles],
                 &[self.vocab as u32],
                 &[
                     params.temperature.recip(),
@@ -578,7 +626,7 @@ impl DeviceHistory {
             )?;
             dispatch(
                 "logits_finish",
-                &[&weights, &tiles, &self.state],
+                &[&weights, tiles, &self.state],
                 &[&records, &tokens],
                 &[
                     self.vocab as u32,
@@ -612,6 +660,60 @@ impl DeviceHistory {
             ],
             SELECT_THREADS,
         )?;
+        Ok(Selection { records, tokens })
+    }
+
+    /// Returns a token with zero log probability when the caller does not need probability reporting or ranking.
+    pub fn sample_argmax_and_commit(
+        &mut self,
+        logits: &Tensor,
+        params: LogitsSampling,
+        stop_tokens: &[u32],
+    ) -> Result<Selection> {
+        if logits.dims() != [self.vocab]
+            || logits.dtype() != DType::F32
+            || !params.greedy
+            || !params.temperature.is_finite()
+            || params.temperature <= 0.0
+            || !params.repetition.is_finite()
+            || params.repetition <= 0.0
+            || self.committed_len >= self.capacity
+        {
+            candle_core::bail!("invalid fused argmax commit inputs");
+        }
+        self.prepare_stop_tokens(stop_tokens)?;
+        let records = allocate_records(logits.device(), 1)?;
+        let tokens = records.narrow(1, 0, 1)?;
+        let mut scratch = self.scratch.lock().map_err(Error::msg)?;
+        let scratch = LogitsScratch::prepare(&mut scratch, logits.device(), 1, self.vocab)?;
+        dispatch(
+            "argmax_tiles",
+            &[logits, &self.counts],
+            &[&scratch.tiles],
+            &[self.vocab as u32],
+            &[
+                params.temperature.recip(),
+                params.frequency,
+                params.presence,
+                params.repetition,
+            ],
+            self.vocab.div_ceil(LOGITS_TILE) * SELECT_THREADS,
+        )?;
+        dispatch(
+            "argmax_finish_commit",
+            &[&scratch.tiles, &self.stop_tokens.1],
+            &[&records, &self.history, &self.counts, &self.state],
+            &[
+                self.vocab as u32,
+                self.capacity as u32,
+                self.stop_tokens.1.elem_count() as u32,
+                0,
+            ],
+            &[],
+            SIMD_WIDTH,
+        )?;
+        self.last_token = Some(tokens.clone());
+        self.committed_len += 1;
         Ok(Selection { records, tokens })
     }
 
@@ -652,6 +754,7 @@ impl DeviceHistory {
             vocab,
             stop_tokens: (Vec::new(), Tensor::new(&[INVALID_TOKEN], device)?),
             batch: None,
+            scratch: Mutex::new(None),
         })
     }
 
@@ -742,6 +845,12 @@ impl DeviceHistory {
     }
 
     pub fn commit_with_stop_tokens(&mut self, selection: &Selection, tokens: &[u32]) -> Result<()> {
+        self.prepare_stop_tokens(tokens)?;
+        let stops = self.stop_tokens.1.clone();
+        self.commit(selection, &stops)
+    }
+
+    fn prepare_stop_tokens(&mut self, tokens: &[u32]) -> Result<()> {
         if self.stop_tokens.0 != tokens {
             let values = if tokens.is_empty() {
                 &[INVALID_TOKEN]
@@ -750,7 +859,6 @@ impl DeviceHistory {
             };
             self.stop_tokens = (tokens.to_vec(), Tensor::new(values, self.state.device())?);
         }
-        let stops = self.stop_tokens.1.clone();
-        self.commit(selection, &stops)
+        Ok(())
     }
 }

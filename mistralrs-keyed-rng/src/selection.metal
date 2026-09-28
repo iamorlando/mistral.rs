@@ -30,9 +30,11 @@ struct LogitWeights {
     float shift;
     float score(uint i) const {
         float v = logits[i];
-        uint generated = counts[width + i];
-        v -= frequency * float(generated) + (generated > 0 ? presence : 0);
-        if (counts[i] > 0) v = v >= 0 ? v / repetition : v * repetition;
+        if (frequency != 0 || presence != 0) {
+            uint generated = counts[width + i];
+            v -= frequency * float(generated) + (generated > 0 ? presence : 0);
+        }
+        if (repetition != 1 && counts[i] > 0) v = v >= 0 ? v / repetition : v * repetition;
         return v * inverse_temperature;
     }
     float value(uint i) const { return exp(score(i) - shift); }
@@ -44,6 +46,54 @@ struct SelectThread {
     uint lane;
     uint group;
 };
+
+struct BestLogit {
+    float value;
+    uint token;
+    uint invalid;
+};
+
+inline BestLogit reduce_best(BestLogit best, SelectThread t, threadgroup SelectScratch& s) {
+    float value = simd_max(best.value);
+    uint token = simd_min(best.value == value ? best.token : INVALID_TOKEN);
+    uint invalid = simd_or(best.invalid);
+    if (t.lane == 0) {
+        s.maximum[t.group] = value;
+        s.best_id[t.group] = token;
+        s.invalid[t.group] = invalid;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (t.group == 0) {
+        float local = t.lane < SELECT_GROUPS ? s.maximum[t.lane] : -INFINITY;
+        uint id = t.lane < SELECT_GROUPS ? s.best_id[t.lane] : INVALID_TOKEN;
+        value = simd_max(local);
+        token = simd_min(local == value ? id : INVALID_TOKEN);
+        invalid = simd_or(t.lane < SELECT_GROUPS ? s.invalid[t.lane] : 0u);
+        if (t.lane == 0) {
+            s.maximum[0] = value;
+            s.best_id[0] = token;
+            s.invalid[0] = invalid;
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    BestLogit result {s.maximum[0], s.best_id[0], s.invalid[0]};
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    return result;
+}
+
+inline float reduce_mass(float mass, SelectThread t, threadgroup SelectScratch& s) {
+    float value = simd_sum(mass);
+    if (t.lane == 0) s.mass[t.group] = value;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (t.group == 0) {
+        value = simd_sum(t.lane < SELECT_GROUPS ? s.mass[t.lane] : 0.0f);
+        if (t.lane == 0) s.total = value;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    value = s.total;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    return value;
+}
 
 struct CandidateWeights {
     device const float* weights;
@@ -295,6 +345,13 @@ struct TileWeights {
     uint token(uint i) const { return i; }
 };
 
+struct TileMasses {
+    device const LogitTile* tiles;
+    float maximum;
+    float value(uint i) const { return tiles[i].mass * exp(tiles[i].maximum - maximum); }
+    uint token(uint i) const { return i; }
+};
+
 kernel void logits_tiles(device const float* logits [[buffer(0)]], device const uint* counts [[buffer(1)]],
                          device float* weights [[buffer(2)]], device LogitTile* tiles [[buffer(3)]],
                          constant uint& width [[buffer(4)]], constant float4* all_params [[buffer(5)]],
@@ -371,12 +428,7 @@ kernel void logits_finish(device const float* weights [[buffer(0)]], device cons
                           uint tid [[thread_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]],
                           uint group [[simdgroup_index_in_threadgroup]]) {
     threadgroup SelectScratch scratch;
-    threadgroup float maximum;
-    threadgroup float total;
-    threadgroup float conditional;
-    threadgroup uint chosen_tile;
-    threadgroup uint best_index;
-    threadgroup uint valid;
+    threadgroup float draw;
     shape += row * 5;
     uint width = shape[0];
     uint count = (width + LOGITS_TILE - 1) / LOGITS_TILE;
@@ -385,48 +437,46 @@ kernel void logits_finish(device const float* weights [[buffer(0)]], device cons
     state += row * 3;
     records += row * RECORD_WIDTH;
     tokens += row;
-    if (tid == 0) {
-        maximum = -INFINITY;
-        best_index = INVALID_TOKEN;
-        valid = 1;
-        for (uint i = 0; i < count; ++i) {
-            valid &= tiles[i].invalid == 0;
-            if (tiles[i].maximum > maximum || (tiles[i].maximum == maximum && tiles[i].best < best_index)) {
-                maximum = tiles[i].maximum;
-                best_index = tiles[i].best;
-            }
+    SelectThread t {tid, lane, group};
+    BestLogit best {-INFINITY, INVALID_TOKEN, 0};
+    for (uint i = tid; i < count; i += SIMD_WIDTH * SELECT_GROUPS) {
+        LogitTile tile = tiles[i];
+        best.invalid |= tile.invalid;
+        if (tile.maximum > best.value || (tile.maximum == best.value && tile.best < best.token)) {
+            best.value = tile.maximum;
+            best.token = tile.best;
         }
-        valid &= isfinite(maximum);
+    }
+    best = reduce_best(best, t, scratch);
+    if (tid == 0) {
         records[0] = INVALID_TOKEN;
         records[1] = as_type<uint>(-INFINITY);
         records[2] = 1;
         tokens[0] = INVALID_TOKEN;
-        total = 0;
-        for (uint i = 0; i < count; ++i) total += tiles[i].mass * exp(tiles[i].maximum - maximum);
-        if (shape[1] == 0) {
-            float draw = uniform_from_uint(threefry2x32(state[1], shape[4], shape[2], shape[3]).x);
-            float target = draw * total;
-            float before = 0;
-            for (uint i = 0; i < count; ++i) {
-                float mass = tiles[i].mass * exp(tiles[i].maximum - maximum);
-                if (mass > 0) { chosen_tile = i; conditional = (target - before) / mass; }
-                if (before + mass > target) break;
-                before += mass;
-            }
-        }
     }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (!valid) return;
-    uint chosen = best_index;
+    if (best.invalid != 0 || !isfinite(best.value)) return;
+    TileMasses masses {tiles, best.value};
+    float mass = 0;
+    for (uint i = tid; i < count; i += SIMD_WIDTH * SELECT_GROUPS) mass += masses.value(i);
+    float total = reduce_mass(mass, t, scratch);
+    uint chosen = best.token;
     if (shape[1] == 0) {
-        uint offset = chosen_tile * LOGITS_TILE;
+        if (tid == 0) draw = uniform_from_uint(threefry2x32(state[1], shape[4], shape[2], shape[3]).x);
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        uint tile = parallel_select(masses, count, draw, false, float2(1, 0), t, scratch);
+        float before = 0;
+        for (uint i = tid; i < tile; i += SIMD_WIDTH * SELECT_GROUPS) before += masses.value(i);
+        before = reduce_mass(before, t, scratch);
+        float conditional = (draw * total - before) / masses.value(tile);
+        uint offset = tile * LOGITS_TILE;
         chosen = parallel_select(TileWeights {weights + offset}, min(width - offset, LOGITS_TILE),
-                                 conditional, false, float2(1, 0), SelectThread {tid, lane, group}, scratch);
+                                 conditional, false, float2(1, 0), t, scratch);
         if (chosen != INVALID_TOKEN) chosen += offset;
     }
     if (tid == 0 && chosen != INVALID_TOKEN) {
         records[0] = chosen;
-        records[1] = as_type<uint>(log(weights[chosen]) + tiles[chosen / LOGITS_TILE].maximum - maximum - log(total));
+        records[1] = as_type<uint>(shape[1] != 0 ? -log(total)
+            : log(weights[chosen]) + tiles[chosen / LOGITS_TILE].maximum - best.value - log(total));
         records[2] = 0;
         tokens[0] = chosen;
     }

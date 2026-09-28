@@ -69,12 +69,21 @@ cached until the stop list changes. All bindings check device identity,
 contiguity, dtypes, dimensions and view offsets; read/write bindings participate
 in Candle's automatic barriers and buffer lifetime management.
 
+Single-sequence greedy serving without reporting or choice ranking uses two
+kernels: parallel tile argmax, then SIMD reduction with accepted-token commit.
+It skips probability normalization and reuses the selected record as the next
+device input. Reporting and ranking retain the full-distribution log probability.
+Tile and weight scratch buffers persist across steps; returned selections retain
+separate immutable records so queued outputs remain valid.
+
 ## Integration boundaries
 
 Set `MISTRALRS_SAMPLING_RNG=keyed-threefry2x32-v1` before starting the process.
 The default remains Isaac64. This intentionally changes seeded output when enabled.
 Ordinary eligible Metal batches keep logits/candidates on device and read one
 compact batch of selected records. History commits are queued before that read.
+Both cache backends preserve eligible Metal causal logits before the sampler;
+the earlier CUDA-only preservation check downloaded batched logits too early.
 Device history supplies penalties and the next
 one-token text decode input. Full logprob requests retain device selection and read additional reporting
 probabilities afterward. Custom processors and DRY use the host sampler with the

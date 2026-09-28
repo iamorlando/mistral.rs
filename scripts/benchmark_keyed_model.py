@@ -17,6 +17,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--features", required=True)
     parser.add_argument("--rounds", type=int, default=1)
+    parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument(
         "--modes",
         nargs="+",
@@ -43,12 +44,15 @@ def main():
         "--iterations", "5",
         "--warmup", "2",
     ]
+    if args.batch_size != 1:
+        command += ["--batch-size", str(args.batch_size)]
     args.output.mkdir(parents=True, exist_ok=True)
     binaries = {"current": args.binary}
     if args.baseline_binary:
         binaries["before"] = args.baseline_binary
     summary = {
         "features": args.features,
+        "batch_size": args.batch_size,
         "binary_sha256": {
             name: hashlib.sha256(path.read_bytes()).hexdigest()
             for name, path in binaries.items()

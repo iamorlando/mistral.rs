@@ -1,5 +1,9 @@
 # Sampling benchmarks
 
+The latest [batch residency and fused greedy report](m2-max-fused-2026-09-27/README.md)
+includes release-model gains over reference Metal and CPU, size-aware full-model
+readback audits, and the complete sampling matrix.
+
 Run the real CPU and Metal sampler implementations with synthetic, resident f32
 logits, then validate the generated device histories:
 
@@ -71,6 +75,9 @@ python3 scripts/audit_keyed_readbacks.py /path/to/mistralrs_core-test-binary /pa
 
 Add `--batch 8` to verify that compact results still use one readback per batch
 step. A machine-readable JSON summary is saved next to the debugger transcript.
+Use `--filter top1 --dispatches` to check the two-kernel greedy sampler. For a
+model audit, `--batch 8` runs eight completion choices through the actual engine;
+`--dispatches` verifies the GPU sampler is reached after the model forward pass.
 
 The script sets source breakpoints inside Candle's actual Metal storage `to_cpu`
 implementation, where it allocates a CPU staging buffer, blits the source buffer,
@@ -107,6 +114,13 @@ all transformer layers to the chosen device, disables paged attention, generates
 warmups. The CLI measures streaming decode throughput after the first token.
 Loading and prefill are excluded from decode TPOT. No global seed is needed for
 greedy sampling; the CPU backend rejects the CLI's global `set_seed` operation.
+
+Pass `--batch-size 8` to the benchmark script or CLI to request eight simultaneous
+completion choices with the same prompt. Reported throughput is aggregate tokens
+per second and TPOT is its reciprocal; TTFT spans the whole request's prefill.
+The benchmark waits for every choice to finish and disables EOS termination so
+each choice generates the requested number of tokens. Multiple choices retain
+ranking log probabilities, so this also exercises the normalized batch sampler.
 
 The `--model` readback audit traces eight generated tokens after warmup in the
 actual inference engine. Add `--legacy` for the default sampler positive control.

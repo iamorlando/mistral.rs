@@ -1,0 +1,17 @@
+study,batch_size,depth,mode,processes,mean_tokens_per_second,min_tokens_per_second,max_tokens_per_second
+model,1,128,metal_legacy,5,278.50,274.2,286.7
+model,1,128,metal_keyed_before,5,277.86,272.9,285.6
+model,1,128,metal_keyed,5,279.54,275.1,287.3
+model,1,512,metal_legacy,5,257.28,253.8,264.3
+model,1,512,metal_keyed_before,5,256.86,252.3,263.3
+model,1,512,metal_keyed,5,258.28,253.4,264.4
+model-b8,8,128,metal_legacy,5,1181.58,1160.5,1197.1
+model-b8,8,128,metal_keyed,5,1325.10,1322.1,1333.5
+model-b8,8,512,metal_legacy,5,1035.88,1017.6,1046.6
+model-b8,8,512,metal_keyed,5,1148.66,1144.4,1155.8
+model-b8-cpu,8,128,cpu_legacy,1,161.50,161.5,161.5
+model-b8-cpu,8,128,metal_legacy,1,1177.40,1177.4,1177.4
+model-b8-cpu,8,128,metal_keyed,1,1326.10,1326.1,1326.1
+model-b8-cpu,8,512,cpu_legacy,1,161.10,161.1,161.1
+model-b8-cpu,8,512,metal_legacy,1,1038.90,1038.9,1038.9
+model-b8-cpu,8,512,metal_keyed,1,1149.70,1149.7,1149.7

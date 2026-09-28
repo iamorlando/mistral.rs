@@ -854,6 +854,25 @@ async fn sample_and_add_toks_inner(
     Ok(())
 }
 
+pub(crate) fn can_sample_batch_keyed_metal(seqs: &[&mut Sequence]) -> bool {
+    #[cfg(feature = "metal")]
+    {
+        crate::sampler::keyed_sampling_enabled()
+            && !seqs.is_empty()
+            && seqs.iter().all(|seq| {
+                matches!(seq.recognizer, SequenceRecognizer::None)
+                    && seq.tool_call_state.is_none()
+                    && !seq.return_logprobs()
+                    && seq.sampler().can_sample_keyed_metal()
+            })
+    }
+    #[cfg(not(feature = "metal"))]
+    {
+        let _ = seqs;
+        false
+    }
+}
+
 #[cfg(feature = "metal")]
 fn try_sample_batch_keyed_metal(
     logits: &CausalLogitsBatch,
@@ -862,15 +881,7 @@ fn try_sample_batch_keyed_metal(
     eos: &[u32],
     disable_eos_stop: bool,
 ) -> Result<Option<Vec<Result<Logprobs>>>> {
-    if !crate::sampler::keyed_sampling_enabled()
-        || seqs.is_empty()
-        || seqs.iter().any(|seq| {
-            !matches!(seq.recognizer, SequenceRecognizer::None)
-                || seq.tool_call_state.is_some()
-                || seq.return_logprobs()
-                || !seq.sampler().can_sample_keyed_metal()
-        })
-    {
+    if !can_sample_batch_keyed_metal(seqs) {
         return Ok(None);
     }
     let rows = match logits {
@@ -895,7 +906,13 @@ fn try_sample_batch_keyed_metal(
         && seqs
             .iter()
             .all(|seq| sampler.keyed_metal_batch_compatible(&seq.sampler()));
-    let selections = if compatible {
+    let fused_argmax = seqs.len() == 1
+        && sampler.can_sample_keyed_argmax()
+        && !seqs[0].sampling_logprob_required();
+    let selections = if fused_argmax {
+        let eos = seqs[0].effective_eos_tokens(eos, disable_eos_stop);
+        vec![seqs[0].submit_keyed_argmax_and_commit(&rows[0], max_model_len, eos)?]
+    } else if compatible {
         for (seq, logits) in seqs.iter_mut().zip(&rows) {
             seq.prepare_keyed_metal_history(logits, max_model_len)?;
         }
@@ -922,9 +939,11 @@ fn try_sample_batch_keyed_metal(
             })
             .collect::<Result<Vec<_>>>()?
     };
-    for (seq, selection) in seqs.iter_mut().zip(&selections) {
-        let eos = seq.effective_eos_tokens(eos, disable_eos_stop);
-        seq.commit_keyed_metal_selection(selection, eos)?;
+    if !fused_argmax {
+        for (seq, selection) in seqs.iter_mut().zip(&selections) {
+            let eos = seq.effective_eos_tokens(eos, disable_eos_stop);
+            seq.commit_keyed_metal_selection(selection, eos)?;
+        }
     }
     let results = mistralrs_keyed_rng::metal::Selection::readback_batch(
         &selections.iter().collect::<Vec<_>>(),
@@ -1800,6 +1819,42 @@ mod tests {
 
     fn stochastic_test_sequence(seed: u64) -> Sequence {
         sampled_test_sequence(seed, -1, 1.0)
+    }
+
+    #[cfg(feature = "metal")]
+    #[test]
+    fn keyed_metal_fused_argmax_keeps_ranking_logprobs() -> Result<()> {
+        if !crate::sampler::keyed_sampling_enabled() {
+            return Ok(());
+        }
+        let device = candle_core::Device::new_metal(0)?;
+        let values = [-1.0f32, 1.0, 4.0, 4.0];
+        let logits = Tensor::new(&values, &device)?.reshape((1, 1, 4))?;
+        let expected =
+            candle_nn::ops::softmax_last_dim(&Tensor::new(&values, &candle_core::Device::Cpu)?)?
+                .to_vec1::<f32>()?[2]
+                .ln();
+        for ranking in [false, true] {
+            let mut seq = sampled_test_sequence(42, 1, 0.9);
+            if ranking {
+                *seq.get_mut_group() = SequenceGroup::new(1, false, false, Some(2));
+            }
+            let rows = CausalLogitsBatch::PerSequence(vec![logits.clone()]);
+            let mut sampled =
+                try_sample_batch_keyed_metal(&rows, &mut [&mut seq], 1024, &[2], false)?.unwrap();
+            let sampled = sampled.remove(0)?;
+            assert_eq!(sampled.token, 2);
+            assert!((sampled.logprob - if ranking { expected } else { 0.0 }).abs() < 1e-5);
+            assert_eq!(
+                seq.keyed_history
+                    .as_ref()
+                    .unwrap()
+                    .state()
+                    .to_vec1::<u32>()?,
+                [4, 1, 0]
+            );
+        }
+        Ok(())
     }
 
     #[cfg(feature = "metal")]
