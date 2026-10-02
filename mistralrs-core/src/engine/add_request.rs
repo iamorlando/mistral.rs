@@ -184,6 +184,7 @@ impl Engine {
         if let Some(config) = &request.sampling_params.sampling_trace {
             let validation = config.validate(request.return_logprobs, request.sampling_params.n_choices)
                 .and_then(|()| {
+                    config.validate_watermark(request.sampling_params.watermark.as_ref())?;
                     anyhow::ensure!(is_text_generation && !request.return_raw_logits,
                         "sampling_trace requires ordinary text generation");
                     anyhow::ensure!(get_mut_arcmutex!(self.pipeline).supports_sampling_trace(),
@@ -204,7 +205,12 @@ impl Engine {
             }
         }
         if let Some(config) = &request.sampling_params.watermark {
-            if let Err(error) = config.validate_generation() {
+            let validation = config.validate_generation().and_then(|()| {
+                anyhow::ensure!(!config.uses_tournament() || get_mut_arcmutex!(self.pipeline).supports_sampling_trace(),
+                    "explicit tournament sampling requires ordinary token sampling; speculative and block decoding are unsupported");
+                Ok(())
+            });
+            if let Err(error) = validation {
                 request
                     .response
                     .send(Response::ValidationError(error.into()))

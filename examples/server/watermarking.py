@@ -55,6 +55,24 @@ def main():
     parser.add_argument("--trace-candidates", type=int, default=32)
     parser.add_argument("--trace-layers", type=int, default=8)
     parser.add_argument(
+        "--generation-tournament", action="store_true",
+        help="Capture the actual generation bracket, when the selected policy executes one",
+    )
+    parser.add_argument("--trace-matches", type=int, default=4095)
+    parser.add_argument(
+        "--generation-policy", choices=("probability_updates", "tournament"),
+        help="Select SynthID sampling independently of tracing",
+    )
+    parser.add_argument(
+        "--depth", type=int,
+        help="SynthID generation depth; explicit tournaments support at most 20",
+    )
+    parser.add_argument(
+        "--teaching-tournament", type=int, choices=range(1, 5), metavar="ROUNDS",
+        help="Include a separate SynthID teaching bracket with 1 to 4 rounds",
+    )
+    parser.add_argument("--teaching-seed", type=int, default=0)
+    parser.add_argument(
         "--vocab-size", type=int, help="Model output vocabulary, including padding"
     )
     parser.add_argument(
@@ -63,6 +81,18 @@ def main():
         help="Detect the returned text using model retokenization",
     )
     args = parser.parse_args()
+    if args.generation_tournament:
+        args.trace = True
+    if (
+        args.generation_policy is not None or args.depth is not None
+    ) and args.scheme != "synthid":
+        parser.error("generation policy and depth require synthid")
+    if args.teaching_tournament is not None:
+        args.trace = True
+        if args.scheme != "synthid":
+            parser.error("teaching tournaments require synthid")
+        if not 0 <= args.teaching_seed < 2**64:
+            parser.error("teaching seed must be an unsigned 64-bit integer")
     if (args.trace or args.compare) and args.endpoint not in ("chat/completions", "completions"):
         parser.error("sampling traces require chat/completions or completions")
     config_path = (
@@ -70,6 +100,10 @@ def main():
     )
     config = json.loads(config_path.read_text())
     config["key"] = os.environ["MISTRALRS_WATERMARK_KEY"]
+    if args.generation_policy is not None:
+        config["generation_policy"] = args.generation_policy
+    if args.depth is not None:
+        config["depth"] = args.depth
     if args.vocab_size is not None and "vocab_size" in config:
         config["vocab_size"] = args.vocab_size
     text = "Write a long story about a lunar garden."
@@ -93,11 +127,24 @@ def main():
             "max_candidates": args.trace_candidates,
             "max_layers": args.trace_layers,
         }
+        if args.teaching_tournament is not None:
+            body["sampling_trace"]["teaching_tournament"] = {
+                "rounds": args.teaching_tournament,
+                "seed": args.teaching_seed,
+            }
+        if args.generation_tournament:
+            body["sampling_trace"]["generation_tournament"] = {
+                "max_matches": args.trace_matches
+            }
         body["logprobs"] = 10 if args.endpoint == "completions" else True
         if args.endpoint == "chat/completions":
             body["top_logprobs"] = 10
     if args.compare:
         baseline = {name: value for name, value in body.items() if name != "watermark"}
+        baseline["sampling_trace"] = {
+            name: value for name, value in body["sampling_trace"].items()
+            if name != "teaching_tournament"
+        }
         print(json.dumps({"without_watermark": post(args.base_url, args.endpoint, baseline)}, indent=2))
     response = post(args.base_url, args.endpoint, body)
     print(json.dumps(response, indent=2))

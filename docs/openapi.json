@@ -3406,6 +3406,49 @@
           }
         }
       },
+      "CollapsedSubtree": {
+        "type": "object",
+        "required": [
+          "root_match_id",
+          "round",
+          "first_draw_id",
+          "draw_count",
+          "match_count",
+          "winner_draw_id",
+          "token_id"
+        ],
+        "properties": {
+          "draw_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "first_draw_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "match_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "root_match_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "round": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "token_id": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "winner_draw_id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
       "CompletionChunkChoice": {
         "type": "object",
         "required": [
@@ -4271,6 +4314,235 @@
             "description": "The name of the function to call"
           }
         }
+      },
+      "GenerationDraw": {
+        "type": "object",
+        "required": [
+          "draw_id",
+          "token_id",
+          "text_status",
+          "probability"
+        ],
+        "properties": {
+          "draw_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "probability": {
+            "type": "number",
+            "format": "double"
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "text_status": {
+            "type": "string"
+          },
+          "token_id": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "GenerationEntrant": {
+        "type": "object",
+        "required": [
+          "source",
+          "draw_id",
+          "token_id",
+          "g_value"
+        ],
+        "properties": {
+          "draw_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "g_value": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "source": {
+            "$ref": "#/components/schemas/GenerationSource"
+          },
+          "token_id": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "GenerationMatch": {
+        "type": "object",
+        "required": [
+          "match_id",
+          "round",
+          "left",
+          "right",
+          "winner",
+          "winner_draw_id",
+          "reason"
+        ],
+        "properties": {
+          "left": {
+            "$ref": "#/components/schemas/GenerationEntrant"
+          },
+          "match_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reason": {
+            "type": "string"
+          },
+          "right": {
+            "$ref": "#/components/schemas/GenerationEntrant"
+          },
+          "round": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "winner": {
+            "type": "string"
+          },
+          "winner_draw_id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "GenerationSource": {
+        "type": "object",
+        "required": [
+          "kind",
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string"
+          }
+        }
+      },
+      "GenerationTournament": {
+        "type": "object",
+        "required": [
+          "origin",
+          "used_for_generation",
+          "status",
+          "rounds",
+          "total_draws",
+          "total_matches",
+          "draws",
+          "matches",
+          "collapsed_subtrees",
+          "rng_version",
+          "rng_provenance",
+          "truncated"
+        ],
+        "properties": {
+          "collapsed_subtrees": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CollapsedSubtree"
+            }
+          },
+          "configured_depth": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "draws": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GenerationDraw"
+            }
+          },
+          "effective_seed": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "matches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GenerationMatch"
+            }
+          },
+          "origin": {
+            "type": "string"
+          },
+          "rng_provenance": {
+            "type": "string"
+          },
+          "rng_version": {
+            "type": "string"
+          },
+          "rounds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sampling_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "total_draws": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total_matches": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "truncation_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "used_for_generation": {
+            "type": "boolean"
+          },
+          "winner": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TeachingWinner"
+              }
+            ]
+          }
+        }
+      },
+      "GenerationTournamentConfig": {
+        "type": "object",
+        "properties": {
+          "max_matches": {
+            "type": "integer",
+            "default": 4095,
+            "maximum": 65535,
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
       },
       "Grammar": {
         "oneOf": [
@@ -8253,6 +8525,17 @@
       "SamplingTraceConfig": {
         "type": "object",
         "properties": {
+          "generation_tournament": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GenerationTournamentConfig"
+              }
+            ],
+            "default": null
+          },
           "max_candidates": {
             "type": "integer",
             "default": 32,
@@ -8267,6 +8550,17 @@
             "type": "integer",
             "default": 32,
             "minimum": 0
+          },
+          "teaching_tournament": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TeachingTournamentConfig"
+              }
+            ],
+            "default": null
           }
         },
         "additionalProperties": false
@@ -8311,6 +8605,16 @@
             "type": "integer",
             "minimum": 0
           },
+          "generation_tournament": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GenerationTournament"
+              }
+            ]
+          },
           "layers": {
             "type": "array",
             "items": {
@@ -8327,6 +8631,16 @@
           },
           "selection_rule": {
             "type": "string"
+          },
+          "teaching_tournament": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TeachingTournament"
+              }
+            ]
           },
           "watermark": {
             "oneOf": [
@@ -8597,6 +8911,233 @@
               "null"
             ],
             "description": "Include usage statistics in stream"
+          }
+        }
+      },
+      "SynthIdGenerationPolicy": {
+        "type": "string",
+        "enum": [
+          "probability_updates",
+          "tournament"
+        ]
+      },
+      "TeachingDraw": {
+        "type": "object",
+        "required": [
+          "draw_id",
+          "token_id",
+          "probability"
+        ],
+        "properties": {
+          "draw_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "probability": {
+            "type": "number",
+            "format": "double"
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "token_id": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "TeachingEntrant": {
+        "type": "object",
+        "required": [
+          "source",
+          "draw_id",
+          "g_value"
+        ],
+        "properties": {
+          "draw_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "g_value": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "source": {
+            "$ref": "#/components/schemas/TeachingSource"
+          }
+        }
+      },
+      "TeachingMatch": {
+        "type": "object",
+        "required": [
+          "match_id",
+          "round",
+          "left",
+          "right",
+          "winner",
+          "winner_draw_id",
+          "reason"
+        ],
+        "properties": {
+          "left": {
+            "$ref": "#/components/schemas/TeachingEntrant"
+          },
+          "match_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reason": {
+            "type": "string"
+          },
+          "right": {
+            "$ref": "#/components/schemas/TeachingEntrant"
+          },
+          "round": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "winner": {
+            "type": "string"
+          },
+          "winner_draw_id": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "TeachingSource": {
+        "type": "object",
+        "required": [
+          "type",
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "type": {
+            "type": "string"
+          }
+        }
+      },
+      "TeachingTournament": {
+        "type": "object",
+        "required": [
+          "origin",
+          "used_for_generation",
+          "rng_version",
+          "effective_seed",
+          "status",
+          "requested_rounds",
+          "configured_depth",
+          "rounds",
+          "layer_indices",
+          "draws",
+          "matches"
+        ],
+        "properties": {
+          "configured_depth": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "draws": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeachingDraw"
+            }
+          },
+          "effective_seed": {
+            "type": "string"
+          },
+          "layer_indices": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "matches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeachingMatch"
+            }
+          },
+          "origin": {
+            "type": "string"
+          },
+          "requested_rounds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "rng_version": {
+            "type": "string"
+          },
+          "rounds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string"
+          },
+          "used_for_generation": {
+            "type": "boolean"
+          },
+          "winner": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TeachingWinner"
+              }
+            ]
+          }
+        }
+      },
+      "TeachingTournamentConfig": {
+        "type": "object",
+        "properties": {
+          "rounds": {
+            "type": "integer",
+            "default": 2,
+            "maximum": 4,
+            "minimum": 1
+          },
+          "seed": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0,
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "TeachingWinner": {
+        "type": "object",
+        "required": [
+          "match_id",
+          "draw_id",
+          "token_id"
+        ],
+        "properties": {
+          "draw_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "match_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "token_id": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },
@@ -9187,6 +9728,9 @@
               "depth": {
                 "type": "integer",
                 "minimum": 0
+              },
+              "generation_policy": {
+                "$ref": "#/components/schemas/SynthIdGenerationPolicy"
               },
               "key": {
                 "type": "string"

@@ -217,6 +217,11 @@ pub fn parse_request(
 
     // Validate that the requested model matches the loaded model
     validate_model_name(&oairequest.model, state.clone())?;
+    crate::util::validate_watermark_model(
+        &state,
+        &oairequest.model,
+        oairequest.watermark.as_ref(),
+    )?;
 
     if oairequest.max_tokens == Some(0) {
         anyhow::bail!("max_tokens must be at least 1.");
@@ -224,6 +229,7 @@ pub fn parse_request(
 
     if let Some(trace) = &oairequest.sampling_trace {
         trace.validate(oairequest.logprobs.is_some(), oairequest.n_choices)?;
+        trace.validate_watermark(oairequest.watermark.as_ref())?;
         crate::util::validate_sampling_trace_model(&state, &oairequest.model, false)?;
         anyhow::ensure!(
             oairequest.best_of.is_none_or(|n| n == 1),

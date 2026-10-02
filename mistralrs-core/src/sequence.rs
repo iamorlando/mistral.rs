@@ -757,6 +757,7 @@ pub struct Sequence {
     timestamp: u128,
     sampler: Arc<Sampler>,
     sampling_rng: Option<Arc<std::sync::Mutex<Isaac64Rng>>>,
+    sampling_seed: Option<u64>,
     stop_tokens: Vec<u32>,
     stop_strings: Vec<String>,
     ignore_eos: bool,
@@ -892,6 +893,7 @@ impl Sequence {
         sampling_seed: Option<u64>,
     ) -> Self {
         let prompt_len = tokens.len();
+        let sampling_seed = sampling_seed.or_else(|| sampler.uses_tournament().then(rand::random));
         let _ = block_size; // Block management handled by KVCacheManager
         let stream_logprobs = return_logprobs
             && group
@@ -921,6 +923,7 @@ impl Sequence {
             sampler: sampler.into(),
             sampling_rng: sampling_seed
                 .map(|seed| Arc::new(std::sync::Mutex::new(Isaac64Rng::seed_from_u64(seed)))),
+            sampling_seed,
             stop_tokens,
             stop_strings,
             ignore_eos,
@@ -1443,6 +1446,10 @@ impl Sequence {
         fallback: &Arc<std::sync::Mutex<Isaac64Rng>>,
     ) -> Arc<std::sync::Mutex<Isaac64Rng>> {
         self.sampling_rng.as_ref().unwrap_or(fallback).clone()
+    }
+
+    pub(crate) fn sampling_seed(&self) -> Option<u64> {
+        self.sampling_seed
     }
 
     /// Add a some prefill tokens. Only meant for internal speculative decoding usage.
@@ -2666,14 +2673,44 @@ mod tests {
 
     #[tokio::test]
     async fn sampling_trace_streams_before_terminal_and_omits_unrequested_fields() {
-        for is_chat in [true, false] {
+        for (is_chat, teaching, production) in [
+            (true, false, false),
+            (false, false, false),
+            (true, true, false),
+            (false, true, false),
+            (true, false, true),
+            (false, false, true),
+        ] {
             let mut seq = make_test_sequence();
             seq.cache.push(None);
             let (tx, mut rx) = channel(4);
             seq.responder = tx;
             seq.group = Arc::new(Mutex::new(SequenceGroup::new(1, true, is_chat, None)));
+            let mut step = if production {
+                crate::sampling_trace::tests::generation_step(0)
+            } else {
+                crate::sampling_trace::tests::step(0)
+            };
+            if teaching {
+                let watermark =
+                    crate::Watermark::new(&crate::watermark::token_configs(4)[0]).unwrap();
+                let demo = watermark
+                    .tournament_demo(
+                        &[1.0; 4],
+                        &[0, 1, 2, 3],
+                        4,
+                        &crate::sampling_trace::TeachingTournamentConfig::default().options(0),
+                    )
+                    .unwrap();
+                step.teaching_tournament = Some(
+                    crate::sampling_trace::TeachingTournament::from_library(demo, |id| {
+                        Ok(Some(id.to_string()))
+                    })
+                    .unwrap(),
+                );
+            }
             let trace = crate::sampling_trace::SamplingTrace {
-                steps: vec![crate::sampling_trace::tests::step(0)],
+                steps: vec![step],
                 ..Default::default()
             };
             if is_chat {
@@ -2714,6 +2751,37 @@ mod tests {
                 0
             );
             assert!(first["choices"][0]["finish_reason"].is_null());
+            let step = &first["choices"][0]["sampling_trace"]["steps"][0];
+            if production {
+                assert_eq!(
+                    step["generation_tournament"]["winner"]["token_id"],
+                    step["selected_token_id"]
+                );
+                assert_eq!(step["generation_tournament"]["origin"], "production");
+                assert_eq!(step["generation_tournament"]["used_for_generation"], true);
+                assert_eq!(
+                    step["generation_tournament"]["draws"]
+                        .as_array()
+                        .unwrap()
+                        .len(),
+                    16
+                );
+            } else {
+                assert!(step.get("generation_tournament").is_none());
+            }
+            if teaching {
+                let demo = &step["teaching_tournament"];
+                assert_eq!(demo["origin"], "teaching_simulation");
+                assert_eq!(demo["used_for_generation"], false);
+                assert_eq!(demo["effective_seed"], "3008017655017818559");
+                assert_eq!(demo["draws"].as_array().unwrap().len(), 4);
+                assert_eq!(demo["matches"].as_array().unwrap().len(), 3);
+                assert_eq!(demo["matches"][0]["left"]["source"]["type"], "draw");
+                assert_eq!(demo["matches"][2]["left"]["source"]["type"], "match");
+                assert_eq!(demo["winner"]["match_id"], 2);
+            } else {
+                assert!(step.get("teaching_tournament").is_none());
+            }
             let last = serialize(rx.recv().await.unwrap());
             assert_eq!(last["choices"][0]["finish_reason"], "stop");
             assert!(last["choices"][0].get("sampling_trace").is_none());

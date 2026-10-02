@@ -34,7 +34,7 @@ logs contain the key, so store and transmit them accordingly.
 
 | `scheme` | Parameters beyond `key` | Detection evidence |
 | --- | --- | --- |
-| `synthid` | `ngram_len=5`, `depth=30` | `tokens_scored`, `mean_g_value` |
+| `synthid` | `ngram_len=5`, `depth=30`, `generation_policy="probability_updates"` | `tokens_scored`, `mean_g_value` |
 | `kgw` | Required `vocab_size`; `context_width=1`, `green_fraction=0.5`, `delta=2`, `ignore_repeated_ngrams=true` | Green counts, expected/observed rate, nominal z-score |
 | `unigram` | Required `vocab_size`; `green_fraction=0.5`, `delta=2`, `ignore_repeated_tokens=true` | Green counts, expected/observed rate, nominal z-score |
 | `exponential` | Required `vocab_size`; `sequence_len=1024`, `start_position=0` | `tokens_scored`, `mean_cost` (lower is stronger) |
@@ -291,7 +291,8 @@ and false for red. MPAC uses `kind: "favored"` plus payload position and symbol;
 unfavored includes other colors and the unassigned vocabulary remainder. Full
 MPAC colors are not exported. SynthID `layers` contain candidate-aligned g-values,
 input/output probabilities, and full-support green mass and normalization.
-They show tournament-equivalent reweighting, not invented contestant brackets.
+They show the production probability updates. A separate teaching bracket can
+be requested as described below.
 Warmup and repeated-context skips are explicit and have no fabricated membership
 or layers. Inverse transform also exposes threshold, rank, and CDF intervals in
 the original input weight units. Keys and prompt text are absent from traces.
@@ -325,6 +326,189 @@ python examples/server/watermarking.py kgw --endpoint completions --trace --dete
 Both comparison runs use the same seed and settings. Once their generated
 prefixes differ, subsequent distributions have different contexts. The pre/post
 values within a marked step compare the watermark effect on the same prefix.
+
+### Actual generation tournaments
+
+`POST /v1/completions` accepts `sampling_trace.generation_tournament`. It captures
+the bracket that actually selected the emitted token. Select the generation
+policy independently inside `watermark`:
+
+```json
+{
+  "model": "default",
+  "prompt": "Write a story about a lunar garden.",
+  "max_tokens": 64,
+  "seed": 42,
+  "temperature": 0.8,
+  "top_k": 40,
+  "logprobs": 5,
+  "watermark": {
+    "scheme": "synthid",
+    "key": "<your 64 hexadecimal characters>",
+    "ngram_len": 5,
+    "depth": 4,
+    "generation_policy": "tournament"
+  },
+  "sampling_trace": {
+    "max_steps": 1,
+    "max_candidates": 128,
+    "max_layers": 32,
+    "generation_tournament": {"max_matches": 4095}
+  }
+}
+```
+
+Read `choices[i].sampling_trace.steps[j].generation_tournament`. Chat completions
+support the same nested settings with their usual boolean `logprobs` option.
+The existing tracing restrictions (`n=1`, logprobs, ordinary token decoding)
+still apply. Unsupported configurations are rejected before streaming starts.
+
+`generation_policy` defaults to `probability_updates`. That policy executes
+probability updates followed by a categorical draw; its generation report has
+`status: "no_production_bracket"`, `used_for_generation: false`, and `winner: null`.
+Teaching tournaments and marginal probability layers are never relabelled as
+actual matches. Requesting capture alone does not select tournament sampling.
+
+The `tournament` policy supports depth 1 through 20; depth 30 is rejected rather
+than reduced to a capture limit. It executes the library's scalar sampler on
+complete filtered weights and emits its returned token directly. Its CPU
+sampling choice applies with tracing enabled or disabled, including when the
+model itself runs on CUDA or Metal. The library currently has no device explicit
+bracket implementation. The nested capture flag adds no GPU fallback or readback.
+Speculative and block decoding are unsupported for this policy, even without
+tracing. At depth D, generation performs up to `2^D` draws; limiting capture does
+not reduce that work.
+
+Applied reports have `origin: "production"`, `used_for_generation: true`, and
+`winner.token_id == step.selected_token_id`, matching the committed token. They
+include actual configured depth, executed rounds, full draw/match counts, retained
+draws and matches, and collapsed subtrees. Draw IDs distinguish repeated draws
+of the same token. Match IDs and draw IDs are separate, potentially sparse
+namespaces; do not index arrays by IDs. Entrant `source.kind` is `draw`, `match`,
+or `collapsed_subtree`; source IDs refer to that namespace, with collapsed sources
+using the omitted root match ID. Each entrant includes its token, draw ID, and
+g-value. Match `winner` is `left` or `right`; reasons are `higher_g` or `random_tie`.
+
+Draw `probability` is the full-input probability before watermarking. Explicit
+sampling does not compute a marginal post-watermark vector, so candidate post
+probabilities are omitted and `selection_rule` is `synthid_tournament`. Reporting
+logprobs retain their existing unwatermarked meaning. Warmup and repeated-context
+steps have explicit statuses and no fabricated bracket. Disabled watermarking,
+greedy sampling, and other algorithms report `watermark_disabled`, `greedy`, or
+`unsupported_sampling` respectively.
+
+`max_matches` defaults to 4095 and is bounded by 65535 plus the existing aggregate
+observation and byte budgets. `max_layers` limits captured rounds nearest the
+winner. Either may be zero to retain only the collapsed root and advancing draw.
+`max_candidates` limits the ordinary candidate table, never bracket identities.
+Observation accounting reserves up to four records per retained match plus three
+root records per step (two when `max_layers=0`). Large combinations are rejected
+before generation; reduce `max_steps` or `max_matches` if needed.
+
+Capture reserves space for a minimal current-step report within the existing
+8 MiB request budget. If export exceeds that budget, already captured records
+collapse to the real root and winner, with `max_bytes` recorded; subsequent steps
+continue with the untraced tournament sampler and unchanged RNG. Captured draw
+text is capped at 64 KiB per bracket; exceeding it collapses the bracket with
+`max_text_bytes`. `text_status` distinguishes decoded text, an unavailable
+tokenizer, decode errors, and budget omission. No replacement token text is used.
+
+The report includes `rng_version`, decimal-string `effective_seed`, and the
+library's `sampling_version`. Explicit sampling owns a per-sequence ISAAC64
+stream; an omitted request seed is resolved once regardless of capture. Existing
+shared-RNG sampling is unchanged: if its request seed is unavailable, no-bracket
+reports use `effective_seed: null` and
+`rng_provenance: "unavailable_shared_stream"`. A seed identifies an initial
+stream, not a snapshot; retain the step index, accepted attempt, and generation
+settings for replay. Rejected grammar attempts are discarded from the emitted
+trace. Streaming delivers each committed trace once, before the terminal event.
+
+```bash
+python examples/server/watermarking.py synthid --endpoint completions --model default \
+  --generation-policy tournament --depth 4 --generation-tournament --trace-steps 1
+```
+
+Remove `--generation-tournament` to run the same policy without capture. Omit
+`--generation-policy tournament` to inspect the default policy's honest
+no-bracket report. Neither trace form exposes the watermark key.
+
+### SynthID teaching tournaments
+
+To see a small sampled tournament alongside the production trace, add:
+
+```json
+{
+  "logprobs": true,
+  "watermark": {"scheme": "synthid", "key": "<your 64 hex characters>", "depth": 16},
+  "sampling_trace": {
+    "max_steps": 32,
+    "max_candidates": 32,
+    "max_layers": 8,
+    "teaching_tournament": {"rounds": 3, "seed": 42}
+  }
+}
+```
+
+This is a **teaching simulation**, labeled `origin: "teaching_simulation"` and
+`used_for_generation: false`. Production SynthID updates probabilities directly;
+it does not select the generated token by running this bracket. The simulation
+uses the first requested layers with the same key, hash domain, and context.
+Its winner can differ from the actual `step.selected_token_id`, particularly when
+the configured depth is greater than the requested rounds. A single bracket is
+not an estimate of the final token probabilities.
+
+Each step's optional `teaching_tournament` includes:
+
+- `status`, `requested_rounds`, executed `rounds`, `configured_depth`, and
+  zero-based `layer_indices`.
+- `draws`, with distinct `draw_id`, vocabulary `token_id`, decoded `text`, and
+  `probability` normalized over the complete filtered pre-watermark distribution.
+  Draws are with replacement; repeated tokens keep separate IDs. Contestants can
+  fall outside the ordinary displayed `candidates`.
+- `matches`, in round order, with `match_id`, zero-based `round`, `left` and
+  `right` entrants. Each entrant retains its original `draw_id`, binary `g_value`,
+  and a `source` such as `{"type":"draw","id":0}` or `{"type":"match","id":0}`.
+  A match source refers to that earlier match's winning draw.
+- `winner` side (`left` or `right`), `winner_draw_id`, and `reason` (`higher_g`
+  or `random_tie`) on each match. The top-level `winner` identifies the final
+  match, draw, and token separately from the generated token.
+- `rng_version: "sha256_tournament_demo_v1"` and `effective_seed` as a decimal
+  string, preserving the full 64-bit value in JavaScript clients.
+
+The diagnostic seed is independent of generation's `seed`. For generated index
+`i`, the effective seed is the first eight SHA-256 bytes interpreted as a
+little-endian u64, hashing `b"mistralrs-synthid-teaching-seed-v1\0"`, then the
+little-endian u64 request diagnostic seed, then little-endian u64 `i`.
+The library receives this effective seed. Replaying the same inputs, configuration,
+and diagnostic seed reproduces the bracket without consuming generation RNG.
+Grammar retries reuse the same position seed with the retry's masked input;
+only the accepted attempt is returned.
+
+Applied simulations report `status: "demonstrated"`. Warmup, repeated-context,
+and host greedy skips report `warmup`, `repeated_context`, or `greedy`, with zero
+executed rounds, empty draws/matches, and a null winner. No bracket is fabricated
+for skipped steps.
+
+An empty request object defaults to two rounds and diagnostic seed zero. Rounds
+must be 1 to 4 and cannot exceed configured SynthID depth. Missing or non-SynthID
+watermarks return HTTP 400. Existing trace restrictions still apply. `max_layers`
+independently bounds production layer capture and may be zero. A four-round
+bracket has 16 draws and 15 matches; `max_candidates` does not truncate it.
+Admission counts all bracket records:
+
+`max_steps * (max_candidates * max(1,max_layers) + (2^(rounds+1)-1)) <= 65536`
+
+The additional term is zero when no teaching tournament is requested. The whole
+bracket counts toward the existing 8 MiB byte budget. A step that would exceed
+the budget is dropped whole, preserving valid match references. SSE delivery and
+truncation summaries follow the existing trace behavior. Omitting the option
+performs no simulation and omits its response field. No extra GPU readback occurs.
+
+```bash
+python examples/server/watermarking.py synthid --compare --teaching-tournament 3 --teaching-seed 42 --max-tokens 64
+```
+
+The example includes the tournament only in the marked comparison run.
 
 ## SemStamp
 

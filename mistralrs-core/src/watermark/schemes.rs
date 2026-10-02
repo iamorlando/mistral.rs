@@ -55,6 +55,15 @@ fn enabled() -> bool {
     true
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
+pub enum SynthIdGenerationPolicy {
+    #[default]
+    ProbabilityUpdates,
+    Tournament,
+}
+
 /// Selects a library watermark; vocabulary sizes refer to model output rows, including padding.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "scheme", rename_all = "snake_case", deny_unknown_fields)]
@@ -66,6 +75,8 @@ pub enum WatermarkConfig {
         ngram_len: usize,
         #[serde(default = "super::default_depth")]
         depth: usize,
+        #[serde(default)]
+        generation_policy: SynthIdGenerationPolicy,
     },
     Kgw {
         key: String,
@@ -149,11 +160,22 @@ impl From<SynthIdTextWatermarkConfig> for WatermarkConfig {
             key: config.key,
             ngram_len: config.ngram_len,
             depth: config.depth,
+            generation_policy: SynthIdGenerationPolicy::default(),
         }
     }
 }
 
 impl WatermarkConfig {
+    pub fn uses_tournament(&self) -> bool {
+        matches!(
+            self,
+            Self::Synthid {
+                generation_policy: SynthIdGenerationPolicy::Tournament,
+                ..
+            }
+        )
+    }
+
     pub fn scheme(&self) -> &'static str {
         match self {
             Self::Synthid { .. } => "synthid",
@@ -186,7 +208,11 @@ impl WatermarkConfig {
             !matches!(self, Self::Semstamp { .. }),
             SEMSTAMP_GENERATION_ERROR
         );
-        self.validate()
+        self.validate()?;
+        if self.uses_tournament() {
+            Watermark::new(self)?.production_sampler()?;
+        }
+        Ok(())
     }
 
     pub fn deserialize_option<'de, D: serde::Deserializer<'de>>(
@@ -209,6 +235,7 @@ impl WatermarkConfig {
                 key,
                 ngram_len,
                 depth,
+                ..
             } => {
                 let config = synthid::SynthIdConfig {
                     key: decode_key(key)?,
@@ -375,6 +402,30 @@ pub enum WatermarkTensor {
 }
 
 impl Watermark {
+    pub(crate) fn production_sampler(
+        &self,
+    ) -> Result<synthid::generation_tournament::ProductionTournamentSampler<'_>> {
+        match &self.algorithm {
+            Algorithm::Synthid(w) => w.tournament_sampler().map_err(candle_core::Error::wrap),
+            _ => candle_core::bail!("generation tournament sampling requires SynthID"),
+        }
+    }
+
+    pub(crate) fn tournament_demo(
+        &self,
+        weights: &[f32],
+        context: &[u32],
+        prompt_len: usize,
+        options: &synthid::tournament::TournamentOptions,
+    ) -> Result<synthid::tournament::TournamentDemo> {
+        match &self.algorithm {
+            Algorithm::Synthid(w) => w
+                .tournament_demo(weights, context, prompt_len, options)
+                .map_err(candle_core::Error::wrap),
+            _ => candle_core::bail!("teaching_tournament requires a SynthID watermark"),
+        }
+    }
+
     pub(crate) fn apply_traced(
         &self,
         probs: &mut [f32],
@@ -709,15 +760,37 @@ pub(crate) struct RequestWatermark {
 }
 
 impl RequestWatermark {
+    pub(crate) fn uses_tournament(&self) -> bool {
+        self.config.uses_tournament()
+    }
+
+    pub(crate) fn synthid_depth(&self) -> Option<usize> {
+        match &self.config {
+            WatermarkConfig::Synthid { depth, .. } => Some(*depth),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn teaching_depth(&self) -> Result<usize> {
+        match &self.config {
+            WatermarkConfig::Synthid { depth, .. } => Ok(*depth),
+            _ => candle_core::bail!("teaching_tournament requires a SynthID watermark"),
+        }
+    }
+
     pub(crate) fn scheme(&self) -> &'static str {
         self.config.scheme()
     }
 
     pub(crate) fn new(config: &WatermarkConfig) -> anyhow::Result<Self> {
         config.validate_generation()?;
+        let inner = OnceLock::new();
+        if config.uses_tournament() {
+            let _ = inner.set(Watermark::new(config)?);
+        }
         Ok(Self {
             config: config.clone(),
-            inner: Arc::new(OnceLock::new()),
+            inner: Arc::new(inner),
         })
     }
 

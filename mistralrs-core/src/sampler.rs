@@ -769,6 +769,12 @@ impl Sampler {
         Ok(self)
     }
 
+    pub(crate) fn uses_tournament(&self) -> bool {
+        self.watermark
+            .as_ref()
+            .is_some_and(RequestWatermark::uses_tournament)
+    }
+
     pub(crate) fn temperature(&self) -> Option<f64> {
         self.temperature
     }
@@ -1841,7 +1847,7 @@ impl Sampler {
             .sampling)
     }
 
-    fn speculative_probs(
+    fn pre_watermark_probs(
         &self,
         logits: Tensor,
         context: &[u32],
@@ -1874,6 +1880,27 @@ impl Sampler {
         };
         self.filter_top_kp_min_p(&mut sampling);
         Self::normalize_probs(&mut sampling)?;
+        Ok(SpeculativeProbs {
+            sampling,
+            reporting,
+        })
+    }
+
+    fn speculative_probs(
+        &self,
+        logits: Tensor,
+        context: &[u32],
+        prompt_len: usize,
+    ) -> Result<SpeculativeProbs> {
+        if self.uses_tournament() && self.temperature.is_some() {
+            candle_core::bail!(
+                "explicit tournament sampling does not support speculative probability evaluation"
+            );
+        }
+        let SpeculativeProbs {
+            mut sampling,
+            reporting,
+        } = self.pre_watermark_probs(logits, context, prompt_len)?;
         if let Some(watermark) = &self.watermark {
             if self.temperature.is_some() {
                 watermark
@@ -2172,6 +2199,30 @@ impl Sampler {
         sample_speculative: bool,
         multiple_sequences: bool,
     ) -> Result<Logprobs> {
+        if self.uses_tournament() {
+            if sample_speculative {
+                candle_core::bail!(
+                    "explicit tournament sampling does not support speculative decoding"
+                );
+            }
+            if self.temperature.is_some() {
+                use rand::RngCore;
+                let probs = self.pre_watermark_probs(logits, context, prompt_len)?;
+                let watermark = self
+                    .watermark
+                    .as_ref()
+                    .unwrap()
+                    .resolve(probs.sampling.len())?;
+                let token = {
+                    let mut rng = rng.lock().expect("could not lock rng mutex");
+                    watermark
+                        .production_sampler()?
+                        .sample(&probs.sampling, context, prompt_len, &mut || rng.next_u64())
+                        .map_err(candle_core::Error::wrap)?
+                };
+                return self.logprobs_from_probs(token, &probs.reporting, return_logprobs);
+            }
+        }
         if self.watermark.is_some() {
             #[cfg(any(feature = "cuda", feature = "metal"))]
             if let Some(sampled) = self.try_sample_watermarked_topk(

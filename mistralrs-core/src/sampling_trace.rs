@@ -1,5 +1,11 @@
 use serde::{Deserialize, Serialize};
 
+mod tournament;
+pub use tournament::*;
+mod generation;
+pub use generation::*;
+pub(crate) use generation::{GENERATION_RNG_VERSION, MIN_GENERATION_STEP_BYTES};
+
 const DEFAULT_STEPS: usize = 32;
 const DEFAULT_CANDIDATES: usize = 32;
 const DEFAULT_LAYERS: usize = 8;
@@ -18,6 +24,10 @@ pub struct SamplingTraceConfig {
     pub max_steps: usize,
     pub max_candidates: usize,
     pub max_layers: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub teaching_tournament: Option<TeachingTournamentConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generation_tournament: Option<GenerationTournamentConfig>,
 }
 
 impl Default for SamplingTraceConfig {
@@ -26,6 +36,8 @@ impl Default for SamplingTraceConfig {
             max_steps: DEFAULT_STEPS,
             max_candidates: DEFAULT_CANDIDATES,
             max_layers: DEFAULT_LAYERS,
+            teaching_tournament: None,
+            generation_tournament: None,
         }
     }
 }
@@ -40,10 +52,31 @@ impl SamplingTraceConfig {
                 && self.max_layers <= MAX_LAYERS,
             "sampling_trace limits: max_steps=1..256, max_candidates=1..128, max_layers=0..32"
         );
+        let tournament_records = self
+            .generation_tournament
+            .map(|t| t.records(self.max_layers))
+            .transpose()?
+            .unwrap_or(0)
+            + self
+                .teaching_tournament
+                .map(|t| t.records())
+                .transpose()?
+                .unwrap_or(0);
         anyhow::ensure!(
-            self.max_steps * self.max_candidates * self.max_layers.max(1) <= MAX_OBSERVATIONS,
-            "sampling_trace exceeds 65536 candidate-layer observations"
+            self.max_steps * (self.max_candidates * self.max_layers.max(1) + tournament_records)
+                <= MAX_OBSERVATIONS,
+            "sampling_trace exceeds 65536 candidate-layer and tournament observations"
         );
+        Ok(())
+    }
+
+    pub fn validate_watermark(
+        &self,
+        watermark: Option<&crate::WatermarkConfig>,
+    ) -> anyhow::Result<()> {
+        if let Some(tournament) = self.teaching_tournament {
+            tournament.validate_watermark(watermark)?;
+        }
         Ok(())
     }
 }
@@ -72,6 +105,10 @@ pub struct SamplingTraceStep {
     pub candidates: Vec<TraceCandidate>,
     pub layers: Vec<TraceLayer>,
     pub layers_truncated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub teaching_tournament: Option<TeachingTournament>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generation_tournament: Option<GenerationTournament>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -165,6 +202,12 @@ impl TraceState {
         if generated_index >= self.config.max_steps && !self.trace.truncated {
             self.truncate("max_steps");
         }
+        if self.config.generation_tournament.is_some()
+            && self.bytes + MIN_GENERATION_STEP_BYTES > MAX_BYTES
+            && !self.trace.truncated
+        {
+            self.truncate("max_bytes");
+        }
         (!self.trace.truncated).then_some(self.config)
     }
 
@@ -174,13 +217,41 @@ impl TraceState {
         self.summary_pending = true;
     }
 
-    pub(crate) fn record(&mut self, step: SamplingTraceStep) -> candle_core::Result<()> {
+    pub(crate) fn record(&mut self, mut step: SamplingTraceStep) -> candle_core::Result<()> {
+        if let Some(winner) = step
+            .generation_tournament
+            .as_ref()
+            .and_then(|t| t.winner.as_ref())
+        {
+            if winner.token_id != step.selected_token_id {
+                candle_core::bail!("generation tournament winner differs from committed token");
+            }
+        }
         let mut size = JsonSize::default();
         serde_json::to_writer(&mut size, &step).map_err(candle_core::Error::wrap)?;
-        let bytes = self
+        let mut bytes = self
             .bytes
             .saturating_add(size.0)
             .saturating_add(FRAME_ALLOWANCE);
+        if let Some(tournament) = step
+            .generation_tournament
+            .as_mut()
+            .filter(|_| bytes > MAX_BYTES)
+        {
+            tournament.collapse("max_bytes");
+            step.candidates.clear();
+            step.candidates_truncated = true;
+            step.layers_truncated |= !step.layers.is_empty();
+            step.layers.clear();
+            step.teaching_tournament = None;
+            let mut size = JsonSize::default();
+            serde_json::to_writer(&mut size, &step).map_err(candle_core::Error::wrap)?;
+            bytes = self.bytes + size.0 + FRAME_ALLOWANCE;
+            self.truncate("max_bytes");
+            if bytes > MAX_BYTES {
+                candle_core::bail!("generation trace exceeded its reserved collapsed-root budget");
+            }
+        }
         if bytes > MAX_BYTES {
             self.truncate("max_bytes");
         } else {
@@ -234,7 +305,15 @@ pub(crate) mod tests {
             candidates: Vec::new(),
             layers: Vec::new(),
             layers_truncated: false,
+            teaching_tournament: None,
+            generation_tournament: None,
         }
+    }
+
+    pub(crate) fn generation_step(index: usize) -> SamplingTraceStep {
+        let mut step = step(index);
+        step.generation_tournament = Some(generation::tests::report());
+        step
     }
 
     #[test]
@@ -255,7 +334,8 @@ pub(crate) mod tests {
             assert!(SamplingTraceConfig {
                 max_steps: steps,
                 max_candidates: candidates,
-                max_layers: layers
+                max_layers: layers,
+                ..Default::default()
             }
             .validate(true, 1)
             .is_err());
@@ -268,6 +348,101 @@ pub(crate) mod tests {
         .is_ok());
         assert!(serde_json::from_str::<SamplingTraceConfig>("{\"max_steps\":-1}").is_err());
         assert!(serde_json::from_str::<SamplingTraceConfig>("{\"unknown\":1}").is_err());
+    }
+
+    #[test]
+    fn generation_tournament_bounds_and_reserved_winner_budget() {
+        let config = SamplingTraceConfig {
+            max_steps: 1,
+            generation_tournament: Some(GenerationTournamentConfig::default()),
+            ..Default::default()
+        };
+        config.validate(true, 1).unwrap();
+        assert!(SamplingTraceConfig {
+            generation_tournament: Some(GenerationTournamentConfig {
+                max_matches: usize::MAX
+            }),
+            ..config
+        }
+        .validate(true, 1)
+        .is_err());
+        for (matches, layers) in [(0, 32), (15, 0)] {
+            SamplingTraceConfig {
+                generation_tournament: Some(GenerationTournamentConfig {
+                    max_matches: matches,
+                }),
+                max_layers: layers,
+                ..config
+            }
+            .validate(true, 1)
+            .unwrap();
+        }
+        let mut state = TraceState::new(config);
+        state.bytes = MAX_BYTES - MIN_GENERATION_STEP_BYTES;
+        assert!(state.capture(0).is_some());
+        let mut observation = step(0);
+        observation.generation_tournament = Some(generation::tests::report());
+        state.record(observation).unwrap();
+        assert!(state.capture(1).is_none());
+        let output = state.take(true).unwrap();
+        let bracket = output.steps[0].generation_tournament.as_ref().unwrap();
+        assert_eq!(bracket.winner.as_ref().unwrap().token_id, 1);
+        assert_eq!(bracket.collapsed_subtrees.len(), 1);
+        assert_eq!(bracket.draws.len(), 1);
+        assert!(bracket.matches.is_empty());
+        assert!(state.bytes <= MAX_BYTES);
+        assert_eq!(output.truncation_reason.as_deref(), Some("max_bytes"));
+        let mut state = TraceState::new(config);
+        state.bytes = MAX_BYTES - MIN_GENERATION_STEP_BYTES + 1;
+        assert!(state.capture(0).is_none());
+        let mut state = TraceState::new(config);
+        let mut wrong = step(0);
+        wrong.selected_token_id = 0;
+        wrong.generation_tournament = Some(generation::tests::report());
+        assert!(state.record(wrong).is_err());
+    }
+
+    #[test]
+    fn teaching_tournament_byte_budget_keeps_or_drops_whole_bracket() {
+        let watermark = crate::Watermark::new(&crate::watermark::token_configs(4)[0]).unwrap();
+        let demo = watermark
+            .tournament_demo(
+                &[1.0; 4],
+                &[0, 1, 2, 3],
+                4,
+                &TeachingTournamentConfig::default().options(0),
+            )
+            .unwrap();
+        let mut observation = step(0);
+        assert!(serde_json::to_value(&observation)
+            .unwrap()
+            .get("teaching_tournament")
+            .is_none());
+        observation.teaching_tournament =
+            Some(TeachingTournament::from_library(demo, |id| Ok(Some(id.to_string()))).unwrap());
+        let size = serde_json::to_vec(&observation).unwrap().len() + FRAME_ALLOWANCE;
+        for overflow in [0, 1] {
+            let mut state = TraceState::new(Default::default());
+            state.bytes = MAX_BYTES - size + overflow;
+            state.record(observation.clone()).unwrap();
+            let output = state.take(true).unwrap();
+            assert_eq!(output.truncated, overflow == 1);
+            if overflow == 0 {
+                assert_eq!(
+                    output.steps[0]
+                        .teaching_tournament
+                        .as_ref()
+                        .unwrap()
+                        .matches
+                        .len(),
+                    3
+                );
+            } else {
+                assert!(output.steps.is_empty());
+                assert_eq!(output.truncation_reason.as_deref(), Some("max_bytes"));
+                assert!(state.capture(1).is_none());
+            }
+        }
     }
 
     #[test]

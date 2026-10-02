@@ -293,6 +293,43 @@ mod tests {
     fn sampling_trace_request_response_and_stream_schemas() {
         let value = serde_json::to_value(get_openapi_doc(None)).unwrap();
         let schemas = &value["components"]["schemas"];
+        assert!(
+            schemas["SamplingTraceConfig"]["properties"]["generation_tournament"]
+                .to_string()
+                .contains("GenerationTournamentConfig")
+        );
+        assert!(
+            schemas["SamplingTraceStep"]["properties"]["generation_tournament"]
+                .to_string()
+                .contains("GenerationTournament")
+        );
+        for field in [
+            "winner",
+            "configured_depth",
+            "total_draws",
+            "total_matches",
+            "collapsed_subtrees",
+            "effective_seed",
+            "sampling_version",
+            "rng_provenance",
+        ] {
+            assert!(
+                schemas["GenerationTournament"]["properties"]
+                    .get(field)
+                    .is_some(),
+                "{field}"
+            );
+        }
+        assert!(schemas["GenerationSource"]["properties"]
+            .get("kind")
+            .is_some());
+        assert_eq!(
+            schemas["GenerationTournamentConfig"]["properties"]["max_matches"]["minimum"],
+            0
+        );
+        assert!(schemas["WatermarkConfig"]
+            .to_string()
+            .contains("generation_policy"));
         for name in ["ChatCompletionRequest", "CompletionRequest"] {
             assert!(schemas[name]["properties"]["sampling_trace"]
                 .to_string()
@@ -314,6 +351,32 @@ mod tests {
         assert!(schemas["TraceCandidate"]["properties"]
             .get("input_logit")
             .is_some());
+        assert!(
+            schemas["SamplingTraceConfig"]["properties"]["teaching_tournament"]
+                .to_string()
+                .contains("TeachingTournamentConfig")
+        );
+        assert!(
+            schemas["SamplingTraceStep"]["properties"]["teaching_tournament"]
+                .to_string()
+                .contains("TeachingTournament")
+        );
+        assert_eq!(
+            schemas["TeachingTournament"]["properties"]["effective_seed"]["type"],
+            "string"
+        );
+        assert!(schemas["TeachingSource"]["properties"]
+            .get("type")
+            .is_some());
+        let rounds = &schemas["TeachingTournamentConfig"]["properties"]["rounds"];
+        assert_eq!(rounds["minimum"], 1);
+        assert_eq!(rounds["maximum"], 4);
+        assert!(schemas["TeachingTournament"]["properties"]["draws"]
+            .to_string()
+            .contains("TeachingDraw"));
+        assert!(schemas["TeachingTournament"]["properties"]["matches"]
+            .to_string()
+            .contains("TeachingMatch"));
     }
 
     #[test]

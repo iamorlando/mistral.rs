@@ -569,6 +569,7 @@ pub async fn parse_request(
 ) -> Result<(Request, bool)> {
     if let Some(trace) = &oairequest.sampling_trace {
         trace.validate(oairequest.logprobs, oairequest.n_choices)?;
+        trace.validate_watermark(oairequest.watermark.as_ref())?;
     }
     let ChatCompletionParseContext {
         state,
@@ -592,6 +593,11 @@ pub async fn parse_request(
 
     // Validate that the requested model matches the loaded model
     validate_model_name(&oairequest.model, state.clone())?;
+    crate::util::validate_watermark_model(
+        &state,
+        &oairequest.model,
+        oairequest.watermark.as_ref(),
+    )?;
 
     let mut enable_thinking = oairequest.enable_thinking;
     let mut reasoning_effort = oairequest.reasoning_effort.clone();

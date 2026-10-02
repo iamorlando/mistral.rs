@@ -7,6 +7,24 @@ use std::sync::Arc;
 
 use crate::media_source::{load_media_source, MediaSourcePolicy};
 
+pub(crate) fn validate_watermark_model(
+    state: &MistralRs,
+    model: &str,
+    watermark: Option<&mistralrs_core::WatermarkConfig>,
+) -> anyhow::Result<()> {
+    if let Some(watermark) = watermark {
+        watermark.validate_generation()?;
+        if watermark.uses_tournament() {
+            let config = state
+                .config((model != "default").then_some(model))
+                .map_err(anyhow::Error::msg)?;
+            anyhow::ensure!(config.supports_sampling_trace,
+                "explicit tournament sampling requires ordinary token sampling; speculative and block decoding are unsupported");
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_sampling_trace_model(
     state: &MistralRs,
     model: &str,

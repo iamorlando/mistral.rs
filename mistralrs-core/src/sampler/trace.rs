@@ -1,19 +1,23 @@
 use std::sync::{Arc, Mutex};
 
 use candle_core::{Result, Tensor};
+use llm_watermarking::synthid::generation_tournament::{GenerationRngInfo, NoTournamentReason};
 use llm_watermarking::trace::{SelectionScoreKind, TraceOptions, TraceStatus, TraceView};
+use rand::RngCore;
 use rand_isaac::Isaac64Rng;
 
 use super::{argmax_f32, partial_sort_top_k, Logprobs, Sampler};
 use crate::sampling_trace::{
-    SamplingTraceConfig, SamplingTraceStep, TraceCandidate, TraceInverse, TraceLayer,
-    TraceMembership, TraceWatermark,
+    GenerationTournament, SamplingTraceConfig, SamplingTraceStep, TeachingTournament,
+    TraceCandidate, TraceInverse, TraceLayer, TraceMembership, TraceWatermark,
+    GENERATION_RNG_VERSION,
 };
 
 pub(crate) struct TraceStepContext<'a> {
     pub context: &'a [u32],
     pub prompt_len: usize,
     pub options: SamplingTraceConfig,
+    pub sampling_seed: Option<u64>,
 }
 
 impl Sampler {
@@ -52,8 +56,9 @@ impl Sampler {
             filter.filter_top_kp_min_p(&mut sampling);
         }
         let before = sampling.clone();
+        let explicit = self.uses_tournament() && self.temperature.is_some();
         let library_trace = if let Some(watermark) = &self.watermark {
-            if self.temperature.is_some() {
+            if self.temperature.is_some() && !explicit {
                 let trace = watermark.resolve(sampling.len())?.apply_traced(
                     &mut sampling,
                     step.context,
@@ -70,7 +75,52 @@ impl Sampler {
         } else {
             None
         };
-        let selected = if self.watermark.is_some() {
+        let mut generation_tournament = None;
+        let selected = if explicit {
+            let watermark = self.watermark.as_ref().unwrap().resolve(before.len())?;
+            let sampler = watermark.production_sampler()?;
+            let mut guard = rng.lock().expect("could not lock rng mutex");
+            let token = if let Some(config) = step.options.generation_tournament {
+                let seed =
+                    step.sampling_seed
+                        .ok_or_else(|| {
+                            candle_core::Error::Msg(
+                    "explicit tournament tracing requires resolved sequence RNG provenance".into())
+                        })?
+                        .to_string();
+                let (token, bracket) = sampler
+                    .sample_traced(
+                        &before,
+                        step.context,
+                        step.prompt_len,
+                        &mut || guard.next_u64(),
+                        &config.options(step.options.max_layers),
+                        GenerationRngInfo {
+                            rng_version: GENERATION_RNG_VERSION,
+                            effective_seed: &seed,
+                        },
+                    )
+                    .map_err(candle_core::Error::wrap)?;
+                generation_tournament = Some(GenerationTournament::from_library(bracket, |id| {
+                    self.tokenizer
+                        .as_ref()
+                        .map(|t| {
+                            t.decode(&[id], false)
+                                .map_err(|error| candle_core::Error::Msg(error.to_string()))
+                        })
+                        .transpose()
+                }));
+                token
+            } else {
+                sampler
+                    .sample(&before, step.context, step.prompt_len, &mut || {
+                        guard.next_u64()
+                    })
+                    .map_err(candle_core::Error::wrap)?
+            };
+            drop(guard);
+            self.logprobs_from_probs(token, &reporting, true)?
+        } else if self.watermark.is_some() {
             // Preserve the ordinary path's RNG draw even for a keyed or greedy point mass.
             self.sample_multinomial(&sampling, &reporting, true, rng)?
         } else if self.temperature.is_none() {
@@ -85,9 +135,27 @@ impl Sampler {
                 rng,
             )?
         };
-        let keyed = library_trace
-            .as_ref()
-            .is_some_and(|trace| trace.output_weights().is_none());
+        if step.options.generation_tournament.is_some() && generation_tournament.is_none() {
+            let depth = self.watermark.as_ref().and_then(|w| w.synthid_depth());
+            let reason = if self.watermark.is_none() {
+                NoTournamentReason::WatermarkDisabled
+            } else if self.temperature.is_none() {
+                NoTournamentReason::Greedy
+            } else if depth.is_some() {
+                NoTournamentReason::ProbabilityUpdates
+            } else {
+                NoTournamentReason::UnsupportedSampling
+            };
+            generation_tournament = Some(GenerationTournament::not_run(
+                depth,
+                reason,
+                step.sampling_seed,
+            ));
+        }
+        let keyed = explicit
+            || library_trace
+                .as_ref()
+                .is_some_and(|trace| trace.output_weights().is_none());
         let ranking_input = if self.temperature.is_none() {
             &reporting
         } else {
@@ -173,7 +241,15 @@ impl Sampler {
                     TraceStatus::Warmup => "warmup",
                     TraceStatus::RepeatedContext => "repeated_context",
                 })
-                .unwrap_or("greedy")
+                .unwrap_or_else(|| {
+                    if explicit {
+                        generation_tournament
+                            .as_ref()
+                            .map_or("explicit_tournament", |t| t.status.as_str())
+                    } else {
+                        "greedy"
+                    }
+                })
                 .into(),
             bias_delta: snapshot.as_ref().and_then(|s| s.bias_delta),
             payload_position: snapshot.as_ref().and_then(|s| s.payload_position),
@@ -211,13 +287,49 @@ impl Sampler {
                 probabilities: l.probabilities,
             })
             .collect();
+        let generated_index = step.context.len() - step.prompt_len;
+        let teaching_tournament = step
+            .options
+            .teaching_tournament
+            .map(|config| {
+                let watermark = self.watermark.as_ref().ok_or_else(|| {
+                    candle_core::Error::Msg(
+                        "teaching_tournament requires a SynthID watermark".into(),
+                    )
+                })?;
+                let options = config.options(generated_index);
+                if self.temperature.is_none() {
+                    return Ok(TeachingTournament::greedy(
+                        options,
+                        watermark.teaching_depth()?,
+                    ));
+                }
+                let demo = watermark.resolve(before.len())?.tournament_demo(
+                    &before,
+                    step.context,
+                    step.prompt_len,
+                    &options,
+                )?;
+                TeachingTournament::from_library(demo, |id| {
+                    self.tokenizer
+                        .as_ref()
+                        .map(|t| {
+                            t.decode(&[id], false)
+                                .map_err(|error| candle_core::Error::Msg(error.to_string()))
+                        })
+                        .transpose()
+                })
+            })
+            .transpose()?;
         let trace = SamplingTraceStep {
-            generated_index: step.context.len() - step.prompt_len,
+            generated_index,
             context_length: step.context.len(),
             attempt: 0,
             selected_token_id: selected.token,
             selection_rule: if self.temperature.is_none() {
                 "greedy"
+            } else if explicit {
+                "synthid_tournament"
             } else if keyed {
                 "keyed_argmax"
             } else {
@@ -230,6 +342,8 @@ impl Sampler {
             candidates,
             layers,
             layers_truncated,
+            teaching_tournament,
+            generation_tournament,
         };
         Ok((selected, trace))
     }
@@ -259,6 +373,197 @@ mod tests {
     use std::collections::HashMap;
 
     const VOCAB: usize = 17;
+
+    fn production_config() -> crate::WatermarkConfig {
+        crate::WatermarkConfig::Synthid {
+            key: "42".repeat(32),
+            ngram_len: 5,
+            depth: 4,
+            generation_policy: crate::SynthIdGenerationPolicy::Tournament,
+        }
+    }
+
+    fn production_parity(device: &Device) -> anyhow::Result<()> {
+        use crate::sampling_trace::GenerationTournamentConfig;
+        let logits = Tensor::from_vec(
+            (0..VOCAB).map(|i| (i as f32 * 0.7).sin()).collect(),
+            VOCAB,
+            device,
+        )?;
+        let config = production_config();
+        for temperature in [None, Some(0.7)] {
+            let sampler = sampler(temperature).with_watermark(Some(&config))?;
+            for (context, status) in [
+                (vec![1], "warmup"),
+                (vec![1, 2, 3, 4, 5], "applied"),
+                (vec![1, 2, 3, 4, 1, 2, 3, 4], "repeated_context"),
+            ] {
+                for seed in 0..8 {
+                    for capture in [
+                        None,
+                        Some((0, 32)),
+                        Some((15, 0)),
+                        Some((3, 2)),
+                        Some((15, 32)),
+                    ] {
+                        let plain_rng = Arc::new(Mutex::new(Isaac64Rng::seed_from_u64(seed)));
+                        let traced_rng = Arc::new(Mutex::new(Isaac64Rng::seed_from_u64(seed)));
+                        let expected = sampler.sample(
+                            logits.clone(),
+                            &context,
+                            1,
+                            true,
+                            plain_rng.clone(),
+                            false,
+                            false,
+                        )?;
+                        let (actual, trace) = sampler.sample_traced(
+                            logits.clone(),
+                            TraceStepContext {
+                                context: &context,
+                                prompt_len: 1,
+                                sampling_seed: Some(seed),
+                                options: SamplingTraceConfig {
+                                    max_steps: 1,
+                                    max_candidates: 1,
+                                    max_layers: capture.map_or(0, |c| c.1),
+                                    generation_tournament: capture
+                                        .map(|c| GenerationTournamentConfig { max_matches: c.0 }),
+                                    ..Default::default()
+                                },
+                            },
+                            traced_rng.clone(),
+                        )?;
+                        assert_eq!(
+                            serde_json::to_value(&expected)?,
+                            serde_json::to_value(&actual)?
+                        );
+                        assert_eq!(
+                            plain_rng.lock().unwrap().next_u64(),
+                            traced_rng.lock().unwrap().next_u64()
+                        );
+                        if capture.is_none() {
+                            assert!(serde_json::to_value(&trace)?
+                                .get("generation_tournament")
+                                .is_none());
+                            continue;
+                        }
+                        let bracket = trace.generation_tournament.unwrap();
+                        assert_eq!(bracket.effective_seed, Some(seed.to_string()));
+                        assert_eq!(
+                            bracket.status,
+                            if temperature.is_none() {
+                                "greedy"
+                            } else {
+                                status
+                            }
+                        );
+                        if bracket.used_for_generation {
+                            assert_eq!(bracket.winner.as_ref().unwrap().token_id, actual.token);
+                            assert_eq!(bracket.total_draws, 16);
+                            assert_eq!(bracket.total_matches, 15);
+                            assert_eq!(bracket.rounds, 4);
+                            assert_eq!(bracket.configured_depth, Some(4));
+                            assert_eq!(trace.selection_rule, "synthid_tournament");
+                            assert!(trace.candidates[0].post_watermark_probability.is_none());
+                            assert!(trace.layers.is_empty());
+                            let (matches, layers) = capture.unwrap();
+                            assert!(bracket.matches.len() <= matches);
+                            if matches == 0 || layers == 0 {
+                                assert_eq!(bracket.collapsed_subtrees.len(), 1);
+                                assert_eq!(bracket.draws.len(), 1);
+                            }
+                        } else {
+                            assert!(bracket.winner.is_none());
+                            assert!(bracket.draws.is_empty());
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn generation_tournament_preserves_tokens_logprobs_and_live_rng() -> anyhow::Result<()> {
+        production_parity(&Device::Cpu)
+    }
+
+    #[cfg(feature = "metal")]
+    #[test]
+    #[ignore = "requires a Metal device"]
+    fn generation_tournament_metal_policy_is_independent_of_capture() -> anyhow::Result<()> {
+        production_parity(&Device::new_metal(0)?)
+    }
+
+    #[test]
+    fn generation_tournament_reports_actual_absence_without_changing_sampling() -> anyhow::Result<()>
+    {
+        use crate::sampling_trace::GenerationTournamentConfig;
+        for (config, temperature, status) in [
+            (None, Some(0.7), "watermark_disabled"),
+            (
+                Some(crate::watermark::token_configs(VOCAB)[0].clone()),
+                Some(0.7),
+                "no_production_bracket",
+            ),
+            (
+                Some(crate::watermark::token_configs(VOCAB)[1].clone()),
+                Some(0.7),
+                "unsupported_sampling",
+            ),
+            (Some(production_config()), None, "greedy"),
+        ] {
+            let sampler = sampler(temperature).with_watermark(config.as_ref())?;
+            let logits = Tensor::from_vec(vec![0.1f32; VOCAB], VOCAB, &Device::Cpu)?;
+            let context = [1, 2, 3, 4];
+            let plain_rng = Arc::new(Mutex::new(Isaac64Rng::seed_from_u64(42)));
+            let traced_rng = Arc::new(Mutex::new(Isaac64Rng::seed_from_u64(42)));
+            let expected = sampler.sample(
+                logits.clone(),
+                &context,
+                4,
+                true,
+                plain_rng.clone(),
+                false,
+                false,
+            )?;
+            let (actual, trace) = sampler.sample_traced(
+                logits,
+                TraceStepContext {
+                    context: &context,
+                    prompt_len: 4,
+                    sampling_seed: None,
+                    options: SamplingTraceConfig {
+                        max_steps: 1,
+                        generation_tournament: Some(GenerationTournamentConfig::default()),
+                        ..Default::default()
+                    },
+                },
+                traced_rng.clone(),
+            )?;
+            assert_eq!(
+                serde_json::to_value(expected)?,
+                serde_json::to_value(actual)?
+            );
+            assert_eq!(
+                plain_rng.lock().unwrap().next_u64(),
+                traced_rng.lock().unwrap().next_u64()
+            );
+            let report = trace.generation_tournament.unwrap();
+            assert_eq!(report.status, status);
+            assert!(!report.used_for_generation);
+            assert!(report.winner.is_none());
+            assert!(report.effective_seed.is_none());
+            assert_eq!(report.rng_provenance, "unavailable_shared_stream");
+        }
+        let mut config = serde_json::to_value(production_config())?;
+        config["depth"] = 30.into();
+        assert!(serde_json::from_value::<crate::WatermarkConfig>(config)?
+            .validate_generation()
+            .is_err());
+        Ok(())
+    }
 
     fn sampler(temperature: Option<f64>) -> Sampler {
         Sampler::new(
@@ -305,6 +610,7 @@ mod tests {
                         let (traced, trace) = sampler.sample_traced(
                             logits.clone(),
                             TraceStepContext {
+                                sampling_seed: None,
                                 context: &context,
                                 prompt_len: 1,
                                 options: SamplingTraceConfig {
@@ -359,6 +665,232 @@ mod tests {
     }
 
     #[test]
+    fn teaching_tournament_preserves_generation_trace_and_rng() -> anyhow::Result<()> {
+        teaching_parity(&Device::Cpu)
+    }
+
+    #[cfg(feature = "metal")]
+    #[test]
+    #[ignore = "requires a Metal device"]
+    fn teaching_tournament_metal_host_path_parity() -> anyhow::Result<()> {
+        teaching_parity(&Device::new_metal(0)?)
+    }
+
+    fn teaching_parity(device: &Device) -> anyhow::Result<()> {
+        use crate::sampling_trace::TeachingTournamentConfig;
+        let config = &crate::watermark::token_configs(VOCAB)[0];
+        let logits = Tensor::from_vec(
+            (0..VOCAB).map(|i| (i as f32 * 0.7).sin()).collect(),
+            VOCAB,
+            device,
+        )?;
+        for temperature in [None, Some(0.7)] {
+            let sampler = sampler(temperature).with_watermark(Some(config))?;
+            for (context, expected_status) in [
+                (vec![1], "warmup"),
+                (vec![1, 2, 3, 4, 5], "demonstrated"),
+                (vec![1, 2, 3, 4, 1, 2, 3, 4], "repeated_context"),
+            ] {
+                for seed in 0..12 {
+                    for rounds in [1, 4] {
+                        let options = SamplingTraceConfig {
+                            max_candidates: VOCAB,
+                            max_layers: 4,
+                            ..Default::default()
+                        };
+                        let plain_rng = Arc::new(Mutex::new(Isaac64Rng::seed_from_u64(seed)));
+                        let demo_rng = Arc::new(Mutex::new(Isaac64Rng::seed_from_u64(seed)));
+                        let (plain, trace) = sampler.sample_traced(
+                            logits.clone(),
+                            TraceStepContext {
+                                sampling_seed: None,
+                                context: &context,
+                                prompt_len: 1,
+                                options,
+                            },
+                            plain_rng.clone(),
+                        )?;
+                        let diagnostic = TeachingTournamentConfig { rounds, seed };
+                        let (selected, mut with_demo) = sampler.sample_traced(
+                            logits.clone(),
+                            TraceStepContext {
+                                sampling_seed: None,
+                                context: &context,
+                                prompt_len: 1,
+                                options: SamplingTraceConfig {
+                                    teaching_tournament: Some(diagnostic),
+                                    ..options
+                                },
+                            },
+                            demo_rng.clone(),
+                        )?;
+                        assert_eq!(
+                            serde_json::to_value(plain)?,
+                            serde_json::to_value(selected)?
+                        );
+                        assert_eq!(
+                            plain_rng.lock().unwrap().next_u64(),
+                            demo_rng.lock().unwrap().next_u64()
+                        );
+                        let demo = with_demo.teaching_tournament.take().unwrap();
+                        assert_eq!(
+                            serde_json::to_value(&trace)?,
+                            serde_json::to_value(with_demo)?
+                        );
+                        assert_eq!(demo.origin, "teaching_simulation");
+                        assert!(!demo.used_for_generation);
+                        assert_eq!(
+                            demo.status,
+                            if temperature.is_none() {
+                                "greedy"
+                            } else {
+                                expected_status
+                            }
+                        );
+                        assert_eq!(
+                            demo.effective_seed,
+                            diagnostic.options(context.len() - 1).seed.to_string()
+                        );
+                        assert_eq!(demo.requested_rounds, rounds);
+                        if demo.status != "demonstrated" {
+                            assert_eq!(demo.rounds, 0);
+                            assert!(
+                                demo.draws.is_empty()
+                                    && demo.matches.is_empty()
+                                    && demo.winner.is_none()
+                            );
+                            continue;
+                        }
+                        assert_eq!(demo.draws.len(), 1 << rounds);
+                        assert_eq!(demo.matches.len(), (1 << rounds) - 1);
+                        for draw in &demo.draws {
+                            let row = trace
+                                .candidates
+                                .iter()
+                                .find(|c| c.token_id == draw.token_id)
+                                .unwrap();
+                            assert_eq!(draw.probability, row.pre_watermark_probability);
+                        }
+                        for m in &demo.matches {
+                            for entrant in [&m.left, &m.right] {
+                                let draw = &demo.draws[entrant.draw_id];
+                                let row = trace
+                                    .candidates
+                                    .iter()
+                                    .position(|c| c.token_id == draw.token_id)
+                                    .unwrap();
+                                assert_eq!(entrant.g_value, trace.layers[m.round].g_values[row]);
+                                match entrant.source.kind.as_str() {
+                                    "draw" => assert_eq!(entrant.source.id, entrant.draw_id),
+                                    "match" => {
+                                        assert!(entrant.source.id < m.match_id);
+                                        assert_eq!(
+                                            demo.matches[entrant.source.id].winner_draw_id,
+                                            entrant.draw_id
+                                        );
+                                    }
+                                    _ => panic!("unknown source"),
+                                }
+                            }
+                            let winner = if m.winner == "left" {
+                                &m.left
+                            } else {
+                                &m.right
+                            };
+                            assert_eq!(m.winner_draw_id, winner.draw_id);
+                            assert_eq!(
+                                m.reason,
+                                if m.left.g_value == m.right.g_value {
+                                    "random_tie"
+                                } else {
+                                    "higher_g"
+                                }
+                            );
+                            assert!(
+                                winner.g_value >= m.left.g_value
+                                    && winner.g_value >= m.right.g_value
+                            );
+                        }
+                        let winner = demo.winner.as_ref().unwrap();
+                        assert_eq!(demo.matches[winner.match_id].winner_draw_id, winner.draw_id);
+                        assert_eq!(demo.draws[winner.draw_id].token_id, winner.token_id);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn teaching_tournament_uses_full_support_with_replay_and_duplicates() -> anyhow::Result<()> {
+        use crate::sampling_trace::TeachingTournamentConfig;
+        let config = crate::WatermarkConfig::Synthid {
+            generation_policy: Default::default(),
+            key: "42".repeat(32),
+            ngram_len: 2,
+            depth: 4,
+        };
+        let sampler = Sampler::new(
+            Some(1.0),
+            1,
+            None,
+            None,
+            None,
+            None,
+            None,
+            -1,
+            1.0,
+            0.0,
+            HashMap::new(),
+            vec![],
+        )?
+        .with_watermark(Some(&config))?;
+        let options = SamplingTraceConfig {
+            max_candidates: 1,
+            max_layers: 0,
+            teaching_tournament: Some(TeachingTournamentConfig {
+                rounds: 4,
+                seed: u64::MAX,
+            }),
+            ..Default::default()
+        };
+        let mut prior_demo = None;
+        for generation_seed in [1, 2] {
+            let (_, trace) = sampler.sample_traced(
+                Tensor::new(&[0.0f32, 0.0, 0.0, f32::NEG_INFINITY], &Device::Cpu)?,
+                TraceStepContext {
+                    sampling_seed: None,
+                    context: &[1],
+                    prompt_len: 1,
+                    options,
+                },
+                Arc::new(Mutex::new(Isaac64Rng::seed_from_u64(generation_seed))),
+            )?;
+            assert!(trace.layers.is_empty());
+            let demo = trace.teaching_tournament.unwrap();
+            assert!(demo
+                .draws
+                .iter()
+                .any(|d| d.token_id != trace.candidates[0].token_id));
+            let mut seen = std::collections::HashSet::new();
+            let mut duplicate = false;
+            for (index, draw) in demo.draws.iter().enumerate() {
+                assert_eq!(draw.draw_id, index);
+                assert!(draw.token_id < 3);
+                assert_eq!(draw.probability, 1.0 / 3.0);
+                duplicate |= !seen.insert(draw.token_id);
+            }
+            assert!(duplicate);
+            let serialized = serde_json::to_value(demo)?;
+            if let Some(prior) = prior_demo {
+                assert_eq!(prior, serialized);
+            }
+            prior_demo = Some(serialized);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn sampling_trace_preserves_draws_reporting_and_rng() -> anyhow::Result<()> {
         parity(&Device::Cpu)
     }
@@ -391,6 +923,7 @@ mod tests {
         let (_, trace) = sampler.sample_traced(
             logits,
             TraceStepContext {
+                sampling_seed: None,
                 context: &[1],
                 prompt_len: 1,
                 options: SamplingTraceConfig {
@@ -438,6 +971,7 @@ mod tests {
             let (_, trace) = sampler.sample_traced(
                 Tensor::new(&[0.0f32, 1.0, 2.0, 3.0], &Device::Cpu)?,
                 TraceStepContext {
+                    sampling_seed: None,
                     context: &[1, 2, 3],
                     prompt_len: 2,
                     options: SamplingTraceConfig {
