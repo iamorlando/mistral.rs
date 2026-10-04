@@ -42,6 +42,10 @@ pub trait EmbeddingModel: IsqModel + AnyMoeBaseModelMixin {
         input_ids: &Tensor,
         flash_params: &FlashParams,
     ) -> candle_core::Result<Tensor>;
+    /// Optionally pool sequences while computing their common causal prefix once.
+    fn forward_shared_prefix(&self, _tokens: &[&[u32]]) -> candle_core::Result<Option<Tensor>> {
+        Ok(None)
+    }
     fn device(&self) -> &Device;
 }
 

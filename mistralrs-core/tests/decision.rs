@@ -105,6 +105,34 @@ async fn check_clm(device: Device, tolerance: f64) -> anyhow::Result<()> {
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     assert!(pairs.iter().all(|r| r.usage.input_tokens == 0));
+
+    let independent = loader.load_model_from_hf(
+        None,
+        TokenSource::None,
+        &DType::F32,
+        &device,
+        true,
+        DeviceMapSetting::dummy(),
+        None,
+        None,
+    )?;
+    let independent = independent.lock().await;
+    independent.decide(&request)?;
+    let mut shared = request.clone();
+    shared.state = Value::String("invoice technical ".repeat(24));
+    let combined = pipeline.decide(&shared)?;
+    assert!(combined.usage.input_tokens > 0);
+    for (key, question) in &shared.questions {
+        let mut single = shared.clone();
+        single.questions = [(key.clone(), question.clone())].into_iter().collect();
+        let separate = independent.decide(&single)?;
+        assert!(separate.usage.input_tokens > 0);
+        assert_close(
+            &serde_json::to_value(&combined.answers[key])?,
+            &serde_json::to_value(&separate.answers[key])?,
+            tolerance,
+        );
+    }
     let mut too_long = request;
     too_long.state = Value::String("invoice ".repeat(CLM_MAX_TOKENS + 1));
     assert!(pipeline

@@ -3,6 +3,7 @@
 import argparse
 import copy
 import json
+import math
 import statistics
 import time
 import urllib.request
@@ -56,11 +57,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default="http://127.0.0.1:11436")
     parser.add_argument("--iterations", type=int, default=5)
+    parser.add_argument("--idle-seconds", type=float, default=0)
     parser.add_argument("--compare", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.iterations < 1:
         parser.error("--iterations must be positive")
+    if not math.isfinite(args.idle_seconds) or args.idle_seconds < 0:
+        parser.error("--idle-seconds must be finite and nonnegative")
     cases = ["repeated_request", "new_state_fixed_actions", "new_state_32_actions"]
     reference = json.loads(args.compare.read_text()) if args.compare else None
     requests = []
@@ -88,11 +92,18 @@ def main():
                 requests.append((case, iteration, body))
     samples = []
     for i, (case, iteration, body) in enumerate(requests):
+        if args.idle_seconds:
+            time.sleep(args.idle_seconds)
         answer, elapsed = call(args.base_url, body)
+        if case != "repeated_request" and answer["usage"]["input_tokens"] == 0:
+            raise RuntimeError(
+                f"{case} was already cached; restart the server before replaying a baseline"
+            )
         row = {
             "case": case,
             "iteration": iteration,
             "warmup": iteration == 0,
+            "idle_seconds": args.idle_seconds,
             "ms": elapsed,
             "input_tokens": answer["usage"]["input_tokens"],
             "request": body,

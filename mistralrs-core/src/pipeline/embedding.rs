@@ -929,6 +929,9 @@ impl Pipeline for EmbeddingPipeline {
             &self.tokenizer,
             self.metadata.max_seq_len.min(CLM_MAX_TOKENS),
             |tokens| {
+                if let Some(pooled) = self.model.forward_shared_prefix(tokens)? {
+                    return Ok(pooled);
+                }
                 let input = crate::embedding_models::inputs_processor::make_prompt_chunk(
                     0,
                     tokens.to_vec(),

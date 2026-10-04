@@ -1,12 +1,13 @@
-use std::sync::Mutex;
+use std::{sync::Mutex, time::Instant};
 
 use candle_core::{Device, Tensor};
 use indexmap::IndexMap;
 use tokenizers::Tokenizer;
 
 use super::{
-    cache::{CacheKey, Role, VectorCache},
-    ClmHeads, DecisionRequest, DecisionResponse, DecisionUsage, DecisionValidationError,
+    cache::{CacheKey, Role, ScoreKey, VectorCache},
+    ClmHeads, DecisionPair, DecisionRequest, DecisionResponse, DecisionUsage,
+    DecisionValidationError,
 };
 
 const ENCODER_BATCH_SIZE: usize = 32;
@@ -16,6 +17,8 @@ const CACHE_HITS_METRIC: &str = "mistralrs_decision_cache_hits_total";
 const CACHE_MISSES_METRIC: &str = "mistralrs_decision_cache_misses_total";
 const ENCODER_BATCHES_METRIC: &str = "mistralrs_decision_encoder_batches_total";
 const ENCODER_TOKENS_METRIC: &str = "mistralrs_decision_encoder_tokens_total";
+const INFERENCE_DURATION_METRIC: &str = "mistralrs_decision_inference_duration_seconds";
+const SCORE_CACHE_HITS_METRIC: &str = "mistralrs_decision_score_cache_hits_total";
 
 struct InferenceState {
     cache: VectorCache,
@@ -57,6 +60,7 @@ impl ClmInference {
         max_tokens: usize,
         encode: impl Fn(&[&[u32]]) -> anyhow::Result<Tensor>,
     ) -> anyhow::Result<DecisionResponse> {
+        let started = Instant::now();
         let pairs = request.pairs()?;
         let mut projections = IndexMap::new();
         for pair in &pairs {
@@ -70,6 +74,20 @@ impl ClmInference {
             .map(|(role, text)| CacheKey::new(*role, text))
             .collect();
         let mut state = self.state.lock().expect("CLM cache lock poisoned");
+        let score_key = ScoreKey::new(&pairs, request.temperature);
+        if !state.calibrating {
+            if let Some(logits) = state.cache.scores(&score_key, &keys) {
+                drop(state);
+                let response = decision_response(request, &pairs, &logits, 0, model_id)?;
+                metrics::counter!(CACHE_HITS_METRIC, "model" => model_id.to_owned())
+                    .increment(keys.len() as u64);
+                metrics::counter!(SCORE_CACHE_HITS_METRIC, "model" => model_id.to_owned())
+                    .increment(1);
+                metrics::histogram!(INFERENCE_DURATION_METRIC, "model" => model_id.to_owned(), "cache" => "hit")
+                    .record(started.elapsed().as_secs_f64());
+                return Ok(response);
+            }
+        }
         let mut vectors = if state.calibrating {
             vec![None; keys.len()]
         } else {
@@ -137,7 +155,6 @@ impl ClmInference {
                 }
             }
         }
-        drop(state);
         let vector = |role, text| {
             vectors[projections
                 .get_index_of(&(role, text))
@@ -162,16 +179,11 @@ impl ClmInference {
             )?);
         }
         let logits = Tensor::cat(&scores, 0)?.to_vec1::<f32>()?;
-        let mut offset = 0;
-        let mut answers = IndexMap::new();
-        for ((id, question), pair) in request.questions.iter().zip(&pairs) {
-            let end = offset + pair.keys.len();
-            answers.insert(
-                id.clone(),
-                question.answer(&pair.keys, &logits[offset..end])?,
-            );
-            offset = end;
+        if !state.calibrating {
+            state.cache.insert_scores(score_key, &keys, &logits);
         }
+        drop(state);
+        let response = decision_response(request, &pairs, &logits, input_tokens, model_id)?;
         tracing::debug!(
             hits,
             misses = keys.len() - hits,
@@ -179,16 +191,38 @@ impl ClmInference {
             input_tokens,
             "CLM inference"
         );
-        Ok(DecisionResponse {
-            model: model_id.to_owned(),
-            answers,
-            usage: DecisionUsage {
-                input_tokens,
-                output_tokens: 0,
-                billing_units: request.questions.len(),
-            },
-        })
+        metrics::histogram!(INFERENCE_DURATION_METRIC, "model" => model_id.to_owned(), "cache" => if hits == keys.len() { "hit" } else { "miss" })
+            .record(started.elapsed().as_secs_f64());
+        Ok(response)
     }
+}
+
+fn decision_response(
+    request: &DecisionRequest,
+    pairs: &[DecisionPair],
+    logits: &[f32],
+    input_tokens: usize,
+    model_id: &str,
+) -> anyhow::Result<DecisionResponse> {
+    let mut offset = 0;
+    let mut answers = IndexMap::new();
+    for ((id, question), pair) in request.questions.iter().zip(pairs) {
+        let end = offset + pair.keys.len();
+        answers.insert(
+            id.clone(),
+            question.answer(&pair.keys, &logits[offset..end])?,
+        );
+        offset = end;
+    }
+    Ok(DecisionResponse {
+        model: model_id.to_owned(),
+        answers,
+        usage: DecisionUsage {
+            input_tokens,
+            output_tokens: 0,
+            billing_units: request.questions.len(),
+        },
+    })
 }
 
 fn encoder_batches(tokens: &[Vec<u32>]) -> Vec<Vec<usize>> {
@@ -252,7 +286,7 @@ mod tests {
             let cache = VectorCache::new(bytes, heads.projection_dim(), &Device::Cpu)?;
             Ok(ClmInference::with_cache(heads, cache))
         };
-        let cached = make(4096)?;
+        let cached = make(8192)?;
         let uncached = make(0)?;
         let tiny = make(16)?;
         let tokenizer = Tokenizer::from_file(path.join("encoder/tokenizer.json"))
@@ -293,6 +327,12 @@ mod tests {
             serde_json::to_value(&cold.answers)?,
             serde_json::to_value(&warm.answers)?
         );
+        let mut renamed = request.clone();
+        let question = renamed.questions.shift_remove("q").unwrap();
+        renamed.questions.insert("renamed".into(), question);
+        let renamed = run(&cached, &renamed)?;
+        assert!(renamed.answers.contains_key("renamed"));
+        assert_eq!(renamed.usage.input_tokens, 0);
         request.temperature = 2.0;
         let warm = run(&cached, &request)?;
         assert_eq!(warm.usage.input_tokens, 0);

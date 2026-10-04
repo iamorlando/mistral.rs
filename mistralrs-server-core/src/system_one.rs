@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use axum::{
     extract::{rejection::JsonRejection, State},
     response::{IntoResponse, Response},
@@ -13,6 +15,8 @@ use crate::{
     types::ExtractedMistralRsState,
     util::validate_model_name,
 };
+
+const DISPATCH_DURATION_METRIC: &str = "mistralrs_decision_dispatch_duration_seconds";
 
 #[derive(Debug, serde::Serialize, utoipa::ToSchema)]
 pub struct DecisionModelInfo {
@@ -56,6 +60,7 @@ pub async fn system_one(
         serde_json::to_string(&request).expect("decision request serializes"),
     );
     let (response, mut receiver) = tokio::sync::mpsc::channel(1);
+    let started = Instant::now();
     if let Err(error) = state
         .send_request_async(Request::Decision(Box::new(DecisionInferenceRequest {
             input: request,
@@ -65,7 +70,9 @@ pub async fn system_one(
     {
         return openai_error_from_error(&error, ApiErrorKind::Internal);
     }
-    match receiver.recv().await {
+    let response = receiver.recv().await;
+    metrics::histogram!(DISPATCH_DURATION_METRIC).record(started.elapsed().as_secs_f64());
+    match response {
         Some(Ok(response)) => {
             MistralRs::maybe_log_response(state, &response);
             Json(response).into_response()

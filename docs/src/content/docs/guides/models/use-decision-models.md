@@ -164,7 +164,26 @@ encoder's output device and project cache misses in batches. Encoder embeddings
 and projections stay on device; final candidate logits are copied to the host
 once per request for answer construction. Requests use
 mistral's bounded engine queue, with one decision request evaluated at a time
-per model. Paged KV caching and autoregressive sampling do not apply.
+per model. This encoder path does not perform autoregressive sampling or use
+the text-generation pipeline's paged KV cache.
+
+### Shared state computation
+
+On CPU and Metal, Qwen3 batches with at least 32 common starting tokens compute
+that prefix once within the request. Each question's remaining tokens retain
+their original rotary positions, and a branching attention mask lets them see
+only the shared prefix and their own preceding tokens. Last-token pooling and
+CLM projection heads are unchanged. This reduces repeated encoder work for
+multiple questions about a new state, even with all caches disabled; it does
+not reuse answers from similar text.
+
+This uses the existing Candle attention and tensor operations, with no extra
+embedding readback. Short or unrelated inputs use ordinary batching. CUDA
+retains its existing batched path because its varlen FlashAttention interface
+cannot represent the branching mask. Sliding-window models also retain the
+ordinary path. Token usage counts logical input tokens before prefix sharing;
+debug logs report both logical and computed tokens. Reduced precision can
+produce small rounding differences when the matrix shapes change.
 
 ### State and action caching
 
@@ -173,7 +192,8 @@ the native server reserves a fixed device-memory arena for normalized state and
 action projections. A hit skips tokenization, the encoder, and the projection
 head. Repeated schemas reuse candidate projections when the state changes;
 repeated complete states and instructions also reuse their state projections.
-An exact repeat needs only vector gathering, dot products, and answer assembly.
+With vector caching alone, an exact repeat needs only vector gathering, dot
+products, and answer assembly.
 
 The default is **64 MiB per loaded CLM model**. This is a fixed local-serving
 default; upstream defaults to a 2% device-memory budget. Set `CLM_ACTION_CACHE`
@@ -202,12 +222,29 @@ CUDA, with no embedding readback or GPU backend reimplementation. The native
 cache stores final projections; it does not retain a second host embedding
 cache or reuse KV prefixes between different texts.
 
+Repeated comparisons also reuse a bounded CPU cache of the final float32
+scores already read back for the response. A score-cache hit performs no GPU
+operations or additional readbacks. Keys include the rendered states, ordered
+candidates, and temperature; answers are rebuilt for the current question IDs.
+This cache uses hashed keys rather than retaining input text, and reserves at
+most 1 MiB of score entries, limited to 1/64 of the vector-cache byte budget,
+plus bounded map metadata. It is disabled with `CLM_ACTION_CACHE=0`, bypassed
+during calibration, and cleared when vectors are replaced, evicted, or
+invalidated. New inputs still require encoder inference.
+
 With the server's metrics endpoint enabled, the following counters carry a
 `model` label: `mistralrs_decision_cache_hits_total`,
 `mistralrs_decision_cache_misses_total`, `mistralrs_decision_encoder_batches_total`,
 and `mistralrs_decision_encoder_tokens_total`. Hits and misses count unique
 state/action projection keys per request. Startup logs report reserved bytes
-and capacity; debug logs report per-request hits, misses, batches, and tokens.
+and capacity; debug logs report vector-cache lookups and encoder work.
+Projection hits include vectors covered by a final-score cache hit.
+`mistralrs_decision_score_cache_hits_total` counts requests served from final
+scores. `mistralrs_decision_inference_duration_seconds` measures successful
+inference including cache lookup and response construction, with a `cache`
+label of `hit` or `miss`. `mistralrs_decision_dispatch_duration_seconds` measures
+dispatch through engine response, including queue wait; neither duration
+includes model loading or the application's HTTP proxy.
 
 CLM probabilities are relative to the supplied candidates. Matching Jev's
 [API shape](https://docs.typesafe.ai/api) does not reproduce Jev's model,
@@ -248,16 +285,22 @@ python3 scripts/benchmark_decisions.py --base-url http://127.0.0.1:1234 --output
 python3 scripts/benchmark_decisions.py --base-url http://127.0.0.1:1234 --compare /tmp/clm-before.json --output /tmp/clm-after.json
 ```
 
+Add `--idle-seconds 5` to measure requests spaced five seconds apart. The
+default sends requests back to back, which can substantially understate
+interactive latency after idle periods. Compare runs using the same delay.
+
 The benchmark excludes each scenario's warmup and reports median latency,
 encoder tokens, and numerical answer differences. It covers repeated requests,
 new states with fixed actions, and new states with 32 fixed candidates. Running
-one server at a time avoids memory pressure from loading two encoders.
+one server at a time avoids memory pressure from loading two encoders. The
+benchmark rejects a new-state sample that uses zero encoder tokens, preventing
+an already-cached replay from being reported as fresh-input performance.
 
 Measured on 2026-10-04 with the full Qwen3-8B encoder in BF16 on an M2 Max
 (30 GPU cores, 64 GiB RAM), using a 16 MiB cache. These are five-call medians
 after each scenario's warmup, with the two builds run sequentially:
 
-| Scenario | Initial integration (`5d4a6b6c9`) | Cached integration |
+| Scenario | Initial integration (`5d4a6b6c9`) | Vector cache (`1919767c6`) |
 | --- | --- | --- |
 | Repeated three-question request | 627 ms | 1.3 ms |
 | New state, same three-question schema | 929 ms | 437 ms |
@@ -268,3 +311,41 @@ call. The maximum absolute numerical answer difference was below `0.000001`,
 and selected choices were unchanged. Entirely cached requests used zero encoder
 tokens. These figures exclude model loading and first-use kernel warmup; new
 texts still require encoder inference.
+
+Interactive checks on the same machine, through the app's HTTP proxy, exposed
+225-490 ms delays for vector-cache hits after 2-15 seconds idle. Final-score
+caching reduced repeated pull-request-review comparisons to 11-13 ms after
+those idle intervals, with roughly 0.03-0.06 ms inside inference. A separate
+30-second idle check took 34 ms through the proxy and returned identical
+answers. These checks used the default 64 MiB vector cache. New-state variants with the same criteria
+still took about 1.1 seconds for 255 encoder tokens. The millisecond result
+applies to previously computed comparisons, not arbitrary new inputs; model
+loading and first-use warmup are excluded.
+
+
+A subsequent shared-prefix benchmark used new versions of the three-question
+code-review request, with the same BF16 encoder and default 64 MiB cache. Both
+builds were run sequentially on the same M2 Max. Candidate projections were
+warm, but every measured request had new state vectors and positive encoder
+token usage. Direct HTTP medians exclude the first sample in each group:
+
+| Fresh-input workload | Before prefix sharing | With prefix sharing | Measured calls |
+| --- | --- | --- | --- |
+| Three questions about a short code review | 626 ms | 313 ms | 6 |
+| Three questions about a longer state | 2080 ms | 754 ms | 3 |
+| One question (control) | 315 ms | 310 ms | 3 |
+| Different code changes | 457 ms | 302 ms | 5 |
+
+Selected choices were unchanged. Across all 21 comparisons, the largest
+absolute answer difference was 0.01954 (a Noul probability); for the short
+review group it was 0.00636. Single-question answers were identical. These
+are BF16 rounding differences from the changed computation layout, not
+approximate retrieval or reuse of another input's answer. The deterministic
+float32 CPU and Metal fixture also compares shared computation against
+independent question evaluations.
+
+Fresh short-review requests through the app after 5 and 15 seconds idle took
+740 and 722 ms respectively, each processing 246 logical encoder tokens.
+Those interactive timings remain substantially higher than the 313 ms warm
+backend median. Prefix sharing reduces encoder work; it does not make new
+8B-model decisions run in 12 ms on this machine.

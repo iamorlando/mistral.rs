@@ -1,6 +1,7 @@
 #![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 
 /// Mistral LLM, https://github.com/mistralai/mistral-src
+use super::shared_prefix::SharedPrefixBatch;
 use crate::layers_masker::CausalMaskConfig;
 use candle_core::{DType, Device, Module, Result, Tensor};
 use mistralrs_quant::{
@@ -175,7 +176,7 @@ impl Attention {
         &self,
         xs: &Tensor,
         attention_mask: &AttentionMask,
-        seqlen_offsets: &[usize],
+        positions: &Tensor,
         flash_params: &FlashParams,
     ) -> Result<Tensor> {
         let (b_sz, q_len, _) = xs.dims3()?;
@@ -196,9 +197,7 @@ impl Attention {
         q = q.apply(&self.q_norm)?;
         k = k.apply(&self.k_norm)?;
 
-        let positions =
-            crate::pipeline::text_positions_tensor(seqlen_offsets, q.dim(2)?, q.device())?;
-        (q, k) = self.rotary_emb.forward(&q, &k, &positions)?;
+        (q, k) = self.rotary_emb.forward(&q, &k, positions)?;
 
         let mut attn_output = Sdpa.run_attention(
             &q,
@@ -273,14 +272,14 @@ impl DecoderLayer {
         &self,
         xs: &Tensor,
         attention_mask: &AttentionMask,
-        seqlen_offsets: &[usize],
+        positions: &Tensor,
         flash_params: &FlashParams,
     ) -> Result<Tensor> {
         let residual = xs;
         let xs = self.input_layernorm.forward(xs)?;
         let xs = self
             .self_attn
-            .forward(&xs, attention_mask, seqlen_offsets, flash_params)?;
+            .forward(&xs, attention_mask, positions, flash_params)?;
         let xs = (xs + residual)?;
         let residual = &xs;
         let xs = self
@@ -435,28 +434,36 @@ impl Model {
         input_embeds: Tensor,
         flash_params: &FlashParams,
     ) -> Result<Tensor> {
-        let mut xs = input_embeds;
-
-        let (bs, _seqlen) = input_ids.dims2()?;
-        let seqlen_offsets = vec![0; bs];
+        let (bs, seqlen) = input_ids.dims2()?;
+        let positions =
+            crate::pipeline::text_positions_tensor(&vec![0; bs], seqlen, input_ids.device())?;
 
         let attention_mask = CausalMasker.make_causal_mask(
             input_ids,
             &NotACache,
-            xs.dtype(),
+            input_embeds.dtype(),
             &CausalMaskConfig {
                 sliding_window: self.sliding_window,
                 ..Default::default()
             },
         )?;
-        let attention_mask = DeviceMappedMask::new(attention_mask, &*self.mapper)?;
+        self.forward_masked(input_embeds, attention_mask, &positions, flash_params)
+    }
 
+    fn forward_masked(
+        &self,
+        mut xs: Tensor,
+        attention_mask: AttentionMask,
+        positions: &Tensor,
+        flash_params: &FlashParams,
+    ) -> Result<Tensor> {
+        let attention_mask = DeviceMappedMask::new(attention_mask, &*self.mapper)?;
         for (i, layer) in self.layers.iter().enumerate() {
             xs = self.mapper.map(xs, i)?;
             xs = layer.forward(
                 &xs,
                 &attention_mask.get(xs.device()),
-                &seqlen_offsets,
+                &positions.to_device(xs.device())?,
                 flash_params,
             )?;
         }
@@ -499,6 +506,37 @@ impl EmbeddingModel for Model {
         flash_params: &FlashParams,
     ) -> candle_core::Result<Tensor> {
         self.forward(input_ids, flash_params)
+    }
+    fn forward_shared_prefix(&self, tokens: &[&[u32]]) -> Result<Option<Tensor>> {
+        // CUDA varlen flash attention cannot express branching attention masks.
+        if self.device.is_cuda() || self.sliding_window.is_some() {
+            return Ok(None);
+        }
+        let Some(batch) = SharedPrefixBatch::new(tokens) else {
+            return Ok(None);
+        };
+        let len = batch.tokens.len();
+        let input_ids = Tensor::from_slice(&batch.tokens, (1, len), &self.device)?;
+        let positions = Tensor::from_slice(&batch.positions, len, &self.device)?;
+        let mask =
+            Tensor::from_vec(batch.mask(), (len, len), &self.device)?.to_dtype(self.dtype)?;
+        let xs = self
+            .embed_tokens
+            .embedding_forward(&input_ids, self.dtype)?;
+        let xs = self.forward_masked(
+            xs,
+            AttentionMask::Custom(mask),
+            &positions,
+            &FlashParams::empty(false),
+        )?;
+        let indices = Tensor::new(batch.pooled_indices.as_slice(), &self.device)?;
+        let pooled = xs.squeeze(0)?.index_select(&indices, 0)?;
+        tracing::debug!(
+            input_tokens = tokens.iter().map(|sequence| sequence.len()).sum::<usize>(),
+            computed_tokens = len,
+            "CLM shared-prefix encoding"
+        );
+        Ok(Some(pooled))
     }
     fn device(&self) -> &Device {
         &self.device
