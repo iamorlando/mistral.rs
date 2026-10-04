@@ -354,6 +354,9 @@ pub use mistralrs_core::{LayerTopology, Topology};
 pub use mistralrs_core::{MultimodalLoaderType, NormalLoaderType};
 
 // ========== Token Source ==========
+pub use mistralrs_core::decision::{
+    DecisionAnswer, DecisionQuestion, DecisionRequest, DecisionResponse, DecisionUsage,
+};
 pub use mistralrs_core::TokenSource;
 
 // ========== Engine (Advanced) ==========

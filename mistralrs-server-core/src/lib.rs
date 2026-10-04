@@ -261,6 +261,7 @@ pub mod route_registry;
 pub mod skills;
 pub mod speech_generation;
 pub mod streaming;
+pub mod system_one;
 pub mod types;
 pub mod util;
 pub mod video;

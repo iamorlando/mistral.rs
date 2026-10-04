@@ -66,6 +66,7 @@ use crate::{
         SkillListQuery, SkillObject, SkillVersionObject,
     },
     speech_generation::__path_speech_generation,
+    system_one::__path_system_one,
     watermark::{__path_detect_watermark, WatermarkDetectionInput, WatermarkDetectionRequest},
 };
 use mistralrs_core::{
@@ -117,7 +118,7 @@ use mistralrs_core::{
 pub fn get_openapi_doc(base_path: Option<&str>) -> utoipa::openapi::OpenApi {
     #[derive(OpenApi)]
     #[openapi(
-        paths(models, health, chatcompletions, anthropic_messages, anthropic_count_tokens, completions, embeddings, detect_watermark, re_isq, calibration_start, calibration_status, calibration_apply, image_generation, speech_generation, create_response, get_response, delete_response, cancel_response, upload_skill, list_skills, upload_skill_version, list_skill_versions, load_lora_adapter, unload_lora_adapter, list_lora_adapters, unload_model, reload_model, get_model_status, tune_model, system_info, system_doctor, get_session, put_session, delete_session, list_files, upload_file, get_file, get_file_content, delete_file, list_container_files, get_container_file, get_container_file_content, resolve_agent_approval, metrics),
+        paths(models, health, chatcompletions, anthropic_messages, anthropic_count_tokens, completions, embeddings, system_one, detect_watermark, re_isq, calibration_start, calibration_status, calibration_apply, image_generation, speech_generation, create_response, get_response, delete_response, cancel_response, upload_skill, list_skills, upload_skill_version, list_skill_versions, load_lora_adapter, unload_lora_adapter, list_lora_adapters, unload_model, reload_model, get_model_status, tune_model, system_info, system_doctor, get_session, put_session, delete_session, list_files, upload_file, get_file, get_file_content, delete_file, list_container_files, get_container_file, get_container_file_content, resolve_agent_approval, metrics),
         components(schemas(
             ApprovalDecision,
             ApprovalDecisionRequest,
@@ -245,6 +246,7 @@ pub fn get_openapi_doc(base_path: Option<&str>) -> utoipa::openapi::OpenApi {
         )),
         tags(
             (name = "Mistral.rs", description = "Mistral.rs API"),
+            (name = "System One", description = "Typed decisions with contrastive models"),
             (name = "LoRA adapters", description = "Dynamic LoRA discovery and lifecycle operations")
         ),
         info(

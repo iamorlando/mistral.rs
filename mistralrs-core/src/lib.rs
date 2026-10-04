@@ -77,6 +77,7 @@ pub use toml_selector::{get_toml_selected_model_device_map_params, get_toml_sele
 mod amoe;
 mod attention;
 mod block_diffusion;
+pub mod decision;
 mod diagnostics;
 mod diffusion_models;
 pub mod distributed;
@@ -187,8 +188,8 @@ pub use pipeline::{
 };
 pub use request::{
     resolve_reasoning_controls, ApproximateUserLocation, CalibrationAction, CalibrationRequest,
-    Constraint, DetokenizationRequest, ImageGenerationResponseFormat, LlguidanceGrammar,
-    MessageContent, NormalRequest, ReasoningControlError, ReasoningEffort,
+    Constraint, DecisionInferenceRequest, DetokenizationRequest, ImageGenerationResponseFormat,
+    LlguidanceGrammar, MessageContent, NormalRequest, ReasoningControlError, ReasoningEffort,
     ReasoningEffortParseError, Request, RequestMessage, ResolvedReasoningControls,
     SearchContextSize, TokenizationRequest, WebSearchContentType, WebSearchFilters,
     WebSearchImageSettings, WebSearchOptions, WebSearchReturnTokenBudget, WebSearchUserLocation,
@@ -1123,6 +1124,9 @@ impl MistralRs {
         }
         let requested_model = match &*request {
             Request::Normal(request) => request.model_id.clone(),
+            Request::Decision(request) => {
+                (request.input.model != "default").then(|| request.input.model.clone())
+            }
             _ => None,
         };
         self.get_sender(requested_model.as_deref())?;

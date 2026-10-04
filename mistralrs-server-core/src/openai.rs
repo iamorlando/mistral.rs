@@ -1326,6 +1326,8 @@ pub struct ModelObject {
 pub struct ModelObjects {
     pub object: &'static str,
     pub data: Vec<ModelObject>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<crate::system_one::DecisionModelInfo>,
 }
 
 #[derive(Debug, ToSchema)]

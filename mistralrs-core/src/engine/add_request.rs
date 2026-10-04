@@ -115,6 +115,13 @@ impl Engine {
                     warn!("ISQ requantization failed: {e:?}");
                 }
             }
+            Request::Decision(request) => {
+                if request.response.is_closed() {
+                    return;
+                }
+                let result = get_mut_arcmutex!(self.pipeline).decide(&request.input);
+                let _ = request.response.send(result).await;
+            }
             Request::Calibration(req) => {
                 let result = {
                     let mut pipeline = get_mut_arcmutex!(self.pipeline);

@@ -126,6 +126,7 @@ export default defineConfig({
                 'guides/models/use-speech-models',
                 'guides/models/use-image-generation',
                 'guides/models/use-embeddings',
+                'guides/models/use-decision-models',
                 'guides/models/use-block-diffusion',
               ],
             },

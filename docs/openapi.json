@@ -1396,6 +1396,45 @@
         }
       }
     },
+    "/v1/systemone": {
+      "post": {
+        "tags": [
+          "System One"
+        ],
+        "operationId": "system_one",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Typed decisions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid question, input, or model capability"
+          },
+          "404": {
+            "description": "Model not found"
+          },
+          "500": {
+            "description": "Inference failed"
+          }
+        }
+      }
+    },
     "/v1/unload_lora_adapter": {
       "post": {
         "tags": [
@@ -4005,6 +4044,273 @@
           }
         }
       },
+      "DecisionAnswer": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "noul",
+              "type"
+            ],
+            "properties": {
+              "noul": {
+                "type": "number",
+                "format": "double"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "noul"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "choice",
+              "confidence",
+              "probabilities",
+              "type"
+            ],
+            "properties": {
+              "choice": {
+                "type": "string"
+              },
+              "confidence": {
+                "type": "number",
+                "format": "double"
+              },
+              "probabilities": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "number",
+                  "format": "double"
+                },
+                "propertyNames": {
+                  "type": "string"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "choice"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "score",
+              "confidence",
+              "probabilities",
+              "legend",
+              "type"
+            ],
+            "properties": {
+              "confidence": {
+                "type": "number",
+                "format": "double"
+              },
+              "legend": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "propertyNames": {
+                  "type": "string"
+                }
+              },
+              "probabilities": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "number",
+                  "format": "double"
+                },
+                "propertyNames": {
+                  "type": "string"
+                }
+              },
+              "score": {
+                "type": "number",
+                "format": "double"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "score"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "DecisionModelInfo": {
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "release_date"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "release_date": {
+            "type": "string"
+          }
+        }
+      },
+      "DecisionQuestion": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "criteria": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": {},
+                "propertyNames": {
+                  "type": "string"
+                }
+              },
+              "instructions": {},
+              "type": {
+                "type": "string",
+                "enum": [
+                  "noul"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "criteria",
+              "type"
+            ],
+            "properties": {
+              "criteria": {
+                "type": "object",
+                "additionalProperties": {},
+                "propertyNames": {
+                  "type": "string"
+                }
+              },
+              "instructions": {},
+              "type": {
+                "type": "string",
+                "enum": [
+                  "choice"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "criteria",
+              "type"
+            ],
+            "properties": {
+              "criteria": {
+                "type": "array",
+                "items": {}
+              },
+              "instructions": {},
+              "type": {
+                "type": "string",
+                "enum": [
+                  "score"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "DecisionRequest": {
+        "type": "object",
+        "required": [
+          "model",
+          "state",
+          "questions"
+        ],
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "questions": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DecisionQuestion"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "state": {},
+          "temperature": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "DecisionResponse": {
+        "type": "object",
+        "required": [
+          "model",
+          "answers",
+          "usage"
+        ],
+        "properties": {
+          "answers": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DecisionAnswer"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "model": {
+            "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/DecisionUsage"
+          }
+        }
+      },
+      "DecisionUsage": {
+        "type": "object",
+        "required": [
+          "input_tokens",
+          "output_tokens",
+          "billing_units"
+        ],
+        "properties": {
+          "billing_units": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "input_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
       "EmbeddingData": {
         "type": "object",
         "required": [
@@ -5176,6 +5482,12 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ModelObject"
+            }
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DecisionModelInfo"
             }
           },
           "object": {
@@ -10451,6 +10763,10 @@
     {
       "name": "Mistral.rs",
       "description": "Mistral.rs API"
+    },
+    {
+      "name": "System One",
+      "description": "Typed decisions with contrastive models"
     },
     {
       "name": "LoRA adapters",

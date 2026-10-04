@@ -381,6 +381,10 @@ fn init_router(
         )
         .route(COMPLETIONS_ROUTE.path, post(completions))
         .route(EMBEDDINGS_ROUTE.path, post(embeddings))
+        .route(
+            crate::route_registry::SYSTEM_ONE_ROUTE.path,
+            post(crate::system_one::system_one),
+        )
         .route(WATERMARK_DETECT_ROUTE.path, post(detect_watermark))
         .route(MODELS_ROUTE.path, get(models))
         .route(LIST_LORA_ADAPTERS_ROUTE.path, get(list_lora_adapters))

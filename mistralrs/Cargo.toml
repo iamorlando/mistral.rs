@@ -137,6 +137,10 @@ path = "examples/quantization/mixture_of_quant_experts/main.rs"
 # ========== Advanced ==========
 
 [[example]]
+name = "system_one"
+path = "examples/advanced/system_one/main.rs"
+
+[[example]]
 name = "tools"
 path = "examples/advanced/tools/main.rs"
 

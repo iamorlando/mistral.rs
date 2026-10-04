@@ -33,6 +33,8 @@ pub const ANTHROPIC_COUNT_TOKENS_ROUTE: RouteInfo =
 pub const COMPLETIONS_ROUTE: RouteInfo =
     RouteInfo::new("/v1/completions", "POST", RouteKind::OpenAi);
 pub const EMBEDDINGS_ROUTE: RouteInfo = RouteInfo::new("/v1/embeddings", "POST", RouteKind::OpenAi);
+pub const SYSTEM_ONE_ROUTE: RouteInfo =
+    RouteInfo::new("/v1/systemone", "POST", RouteKind::MistralRs);
 pub const WATERMARK_DETECT_ROUTE: RouteInfo =
     RouteInfo::new("/v1/watermark/detect", "POST", RouteKind::MistralRs);
 pub const MODELS_ROUTE: RouteInfo = RouteInfo::new("/v1/models", "GET", RouteKind::OpenAi);
@@ -136,6 +138,7 @@ pub const MISTRALRS_API_ROUTES: &[RouteInfo] = &[
     ANTHROPIC_COUNT_TOKENS_ROUTE,
     COMPLETIONS_ROUTE,
     EMBEDDINGS_ROUTE,
+    SYSTEM_ONE_ROUTE,
     WATERMARK_DETECT_ROUTE,
     IMAGE_GENERATION_ROUTE,
     SPEECH_GENERATION_ROUTE,
