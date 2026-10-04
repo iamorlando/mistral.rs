@@ -80,6 +80,11 @@ async fn system_one_http_contract_and_model_routing() -> anyhow::Result<()> {
         assert_eq!(response["answers"]["team"]["type"], "choice");
         assert_eq!(response["answers"]["anger"]["type"], "score");
         assert_eq!(response["usage"]["output_tokens"], 0);
+        if model == "default" {
+            assert_eq!(response["usage"]["input_tokens"], reference["input_tokens"]);
+        } else {
+            assert_eq!(response["usage"]["input_tokens"], 0);
+        }
     }
     let models: Value = client
         .get(format!("{base_url}/v1/models"))

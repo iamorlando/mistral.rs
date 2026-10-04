@@ -141,6 +141,10 @@ pub(crate) struct ClmHeads {
 }
 
 impl ClmHeads {
+    pub fn projection_dim(&self) -> usize {
+        self.state.output.weight().dims()[0]
+    }
+
     pub fn load(path: &Path, config: &ClmConfig, device: &Device) -> Result<Self> {
         let mut zip = zip::ZipArchive::new(BufReader::new(File::open(path)?))?;
         let name = zip
@@ -204,10 +208,10 @@ impl ClmHeads {
         state: &Tensor,
         actions: &Tensor,
         temperature: f64,
-    ) -> candle_core::Result<Vec<f32>> {
+    ) -> candle_core::Result<Tensor> {
         (actions.matmul(&state.t()?)? * (self.scale / temperature))?
             .flatten_all()?
-            .to_vec1()
+            .contiguous()
     }
 }
 
@@ -262,7 +266,7 @@ mod tests {
         let xs = Tensor::from_vec(values, (4, 4096), &Device::Cpu)?;
         let state = heads.project(&xs.narrow(0, 0, 1)?, true)?;
         let actions = heads.project(&xs.narrow(0, 1, 3)?, false)?;
-        let actual = heads.score(&state, &actions, 1.0)?;
+        let actual = heads.score(&state, &actions, 1.0)?.to_vec1::<f32>()?;
         let expected: Value = serde_json::from_str(include_str!(
             "../../tests/fixtures/clm/published-head-reference.json"
         ))?;

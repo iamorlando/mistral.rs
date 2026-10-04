@@ -71,16 +71,40 @@ async fn check_clm(device: Device, tolerance: f64) -> anyhow::Result<()> {
         tolerance,
     );
 
+    let cached = pipeline.decide(&request)?;
+    assert_eq!(cached.usage.input_tokens, 0);
+    assert_eq!(cached.usage.billing_units, request.questions.len());
+    assert_close(
+        &serde_json::to_value(&cached.answers)?,
+        &reference["answers"],
+        tolerance,
+    );
+
     for (key, question) in &request.questions {
         let mut single = request.clone();
         single.questions = [(key.clone(), question.clone())].into_iter().collect();
         let response = pipeline.decide(&single)?;
+        assert_eq!(response.usage.input_tokens, 0);
         assert_close(
             &serde_json::to_value(&response.answers[key])?,
             &reference["answers"][key],
             tolerance,
         );
     }
+    let mut changed_state = request.clone();
+    changed_state.state = Value::String("technical invoice invoice".to_string());
+    let first = pipeline.decide(&changed_state)?;
+    assert!(first.usage.input_tokens > 0);
+    let pairs = changed_state
+        .questions
+        .values()
+        .map(|q| {
+            let mut single = changed_state.clone();
+            single.questions = [("q".to_string(), q.clone())].into_iter().collect();
+            pipeline.decide(&single)
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    assert!(pairs.iter().all(|r| r.usage.input_tokens == 0));
     let mut too_long = request;
     too_long.state = Value::String("invoice ".repeat(CLM_MAX_TOKENS + 1));
     assert!(pipeline

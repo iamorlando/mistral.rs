@@ -9,7 +9,7 @@ use super::{
 };
 use crate::attention::ATTENTION_CHUNK_SIZE;
 use crate::decision::{
-    ClmConfig, ClmHeads, DecisionRequest, DecisionResponse, DecisionUsage, DecisionValidationError,
+    ClmConfig, ClmHeads, ClmInference, DecisionRequest, DecisionResponse, DecisionValidationError,
     CLM_MAX_TOKENS,
 };
 use crate::device_map::{self, DeviceMapper};
@@ -61,8 +61,6 @@ use tokenizers::Tokenizer;
 use tokio::sync::Mutex;
 use tracing::{debug, info, trace, warn};
 
-const CLM_ENCODER_BATCH_SIZE: usize = 4;
-
 pub struct EmbeddingPipeline {
     model: Box<dyn EmbeddingModel + Send + Sync>,
     tracked_modules: Vec<mistralrs_quant::TrackedModule>,
@@ -73,7 +71,7 @@ pub struct EmbeddingPipeline {
     mapper: Box<dyn DeviceMapper + Send + Sync>,
     modules: Vec<Box<dyn Module + Send + Sync>>,
     processor: Arc<dyn Processor + Send + Sync>,
-    clm: Option<ClmHeads>,
+    clm: Option<ClmInference>,
 }
 
 struct ClmSource {
@@ -733,20 +731,21 @@ impl Loader for EmbeddingLoader {
         let clm = self
             .clm
             .as_ref()
-            .map(|clm| -> Result<ClmHeads> {
+            .map(|clm| -> Result<ClmInference> {
                 let encoder: serde_json::Value = serde_json::from_str(&config)?;
                 anyhow::ensure!(
                     encoder["hidden_size"].as_u64() == Some(clm.config.embedding_dim as u64),
                     "CLM encoder hidden_size does not match embedding_dim"
                 );
                 let checkpoint = clm.checkpoint.read().unwrap();
-                ClmHeads::load(
+                let heads = ClmHeads::load(
                     checkpoint.as_deref().context(
                         "Load CLM through load_model_from_hf (also accepts local directories)",
                     )?,
                     &clm.config,
                     model.device(),
-                )
+                )?;
+                ClmInference::new(heads, model.device())
             })
             .transpose()?;
         let tracked_modules = tracker.get().clone();
@@ -833,6 +832,9 @@ impl IsqPipelineMixin for EmbeddingPipeline {
         if self.tracked_modules.is_empty() {
             anyhow::bail!("Runtime re-ISQ requires the model to have been loaded with ISQ.");
         }
+        if let Some(clm) = &self.clm {
+            clm.invalidate(false);
+        }
         tracing::info!(
             "Re-quantizing {} layers to {dtype}.",
             self.tracked_modules.len()
@@ -846,7 +848,11 @@ impl IsqPipelineMixin for EmbeddingPipeline {
     }
 
     fn begin_calibration(&mut self) -> Result<()> {
-        super::isq_flow::begin_calibration(&self.tracked_modules).map(|_| ())
+        super::isq_flow::begin_calibration(&self.tracked_modules)?;
+        if let Some(clm) = &self.clm {
+            clm.invalidate(true);
+        }
+        Ok(())
     }
 
     fn calibration_status(&self) -> Result<super::isq_flow::CalibrationStatus> {
@@ -857,12 +863,19 @@ impl IsqPipelineMixin for EmbeddingPipeline {
         &mut self,
         save_cimatrix: Option<std::path::PathBuf>,
     ) -> Result<super::isq_flow::CalibrationStatus> {
-        super::isq_flow::apply_calibration(
+        if let Some(clm) = &self.clm {
+            clm.invalidate(true);
+        }
+        let status = super::isq_flow::apply_calibration(
             &self.tracked_modules,
             &self.source_weight_files,
             None,
             save_cimatrix.as_deref(),
-        )
+        )?;
+        if let Some(clm) = &self.clm {
+            clm.invalidate(false);
+        }
+        Ok(status)
     }
 }
 
@@ -907,78 +920,32 @@ impl MetadataMixin for EmbeddingPipeline {
 #[async_trait::async_trait]
 impl Pipeline for EmbeddingPipeline {
     fn decide(&self, request: &DecisionRequest) -> Result<DecisionResponse> {
-        let heads = self.clm.as_ref().ok_or_else(|| {
+        let clm = self.clm.as_ref().ok_or_else(|| {
             DecisionValidationError("This embedding model has no CLM projection heads".to_string())
         })?;
-        let pairs = request.pairs()?;
-        let mut texts = indexmap::IndexMap::<&str, usize>::new();
-        for pair in &pairs {
-            for text in std::iter::once(&pair.state).chain(&pair.candidates) {
-                let index = texts.len();
-                texts.entry(text).or_insert(index);
-            }
-        }
-        let max_tokens = self.metadata.max_seq_len.min(CLM_MAX_TOKENS);
-        let mut tokens = Vec::with_capacity(texts.len());
-        let mut input_tokens = 0;
-        for text in texts.keys() {
-            let encoded = self
-                .tokenizer
-                .encode(*text, true)
-                .map_err(anyhow::Error::msg)?;
-            let ids = encoded.get_ids().to_vec();
-            if ids.is_empty() || ids.len() > max_tokens {
-                return Err(DecisionValidationError(format!("Each CLM state with instructions and each candidate must contain 1..={max_tokens} tokens; got {}", ids.len())).into());
-            }
-            input_tokens += ids.len();
-            tokens.push(ids);
-        }
-        let mut order: Vec<_> = (0..tokens.len()).collect();
-        order.sort_by_key(|&i| tokens[i].len());
-        let mut embeddings = vec![None; tokens.len()];
-        for batch in order.chunks(CLM_ENCODER_BATCH_SIZE) {
-            let input = crate::embedding_models::inputs_processor::make_prompt_chunk(
-                0,
-                batch.iter().map(|&i| tokens[i].as_slice()).collect(),
-                self.model.device(),
-                Some(&*self.mapper),
-                true,
-                None,
-            )?;
-            let xs = self.model.forward(&input.input, &input.flash_meta)?;
-            for (row, &index) in batch.iter().enumerate() {
-                embeddings[index] = Some(
-                    xs.i((row, tokens[index].len() - 1, ..))?
-                        .unsqueeze(0)?
-                        .force_contiguous()?,
-                );
-            }
-        }
-        let embedding = |text: &str| embeddings[texts[text]].as_ref().expect("encoded text");
-        let mut answers = indexmap::IndexMap::new();
-        for ((id, question), pair) in request.questions.iter().zip(&pairs) {
-            let state = heads.project(embedding(&pair.state), true)?;
-            let actions = Tensor::cat(
-                &pair
-                    .candidates
+        clm.decide(
+            request,
+            &self.model_id,
+            &self.tokenizer,
+            self.metadata.max_seq_len.min(CLM_MAX_TOKENS),
+            |tokens| {
+                let input = crate::embedding_models::inputs_processor::make_prompt_chunk(
+                    0,
+                    tokens.to_vec(),
+                    self.model.device(),
+                    Some(&*self.mapper),
+                    true,
+                    None,
+                )?;
+                let xs = self.model.forward(&input.input, &input.flash_meta)?;
+                let pooled = tokens
                     .iter()
-                    .map(|text| embedding(text))
-                    .collect::<Vec<_>>(),
-                0,
-            )?;
-            let actions = heads.project(&actions, false)?;
-            let logits = heads.score(&state, &actions, request.temperature)?;
-            answers.insert(id.clone(), question.answer(&pair.keys, &logits)?);
-        }
-        Ok(DecisionResponse {
-            model: self.model_id.clone(),
-            answers,
-            usage: DecisionUsage {
-                input_tokens,
-                output_tokens: 0,
-                billing_units: request.questions.len(),
+                    .enumerate()
+                    .map(|(row, ids)| xs.i((row, ids.len() - 1, ..))?.unsqueeze(0))
+                    .collect::<candle_core::Result<Vec<_>>>()?;
+                Ok(Tensor::cat(&pooled, 0)?.force_contiguous()?)
             },
-        })
+        )
     }
 
     fn forward_inputs(

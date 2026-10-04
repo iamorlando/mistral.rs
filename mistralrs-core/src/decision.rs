@@ -1,8 +1,11 @@
+mod cache;
 mod clm;
+mod inference;
 #[cfg(test)]
 mod tests;
 
 pub(crate) use clm::{ClmConfig, ClmHeads};
+pub(crate) use inference::ClmInference;
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
