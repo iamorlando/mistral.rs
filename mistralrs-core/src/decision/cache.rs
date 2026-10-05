@@ -73,7 +73,7 @@ pub(super) struct VectorCache {
 }
 
 impl VectorCache {
-    pub fn from_env(dim: usize, device: &Device) -> anyhow::Result<Self> {
+    pub fn from_env(dim: usize, device: &Device, workspace_bytes: usize) -> anyhow::Result<Self> {
         let spec =
             std::env::var("CLM_ACTION_CACHE").unwrap_or_else(|_| DEFAULT_CACHE_BUDGET.to_string());
         let memory = crate::MemoryUsage.query(device)?;
@@ -81,7 +81,12 @@ impl VectorCache {
         let bytes = if device.is_cpu() {
             requested
         } else {
-            requested.min(memory.available() / 100 * FREE_MEMORY_PERCENT)
+            requested
+                .min(memory.available() / 100 * FREE_MEMORY_PERCENT)
+                .min(
+                    crate::paged_attention::device_memory_cap(memory.available(), device)
+                        .saturating_sub(workspace_bytes),
+                )
         };
         let cache = Self::new(bytes, dim, device)?;
         tracing::info!(

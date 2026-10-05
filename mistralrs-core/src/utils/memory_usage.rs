@@ -84,7 +84,7 @@ impl MemoryUsage {
                 sys.refresh_memory();
                 Ok(DeviceMemory::Discrete {
                     total: usize::try_from(sys.total_memory())?,
-                    free: usize::try_from(sys.available_memory())?,
+                    free: available_host_memory(&sys)?,
                 })
             }
             #[cfg(feature = "cuda")]
@@ -272,6 +272,38 @@ impl MemoryUsage {
             .map_err(candle_core::Error::wrap)?;
         Ok(true)
     }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn available_host_memory(system: &System) -> Result<usize> {
+    Ok(usize::try_from(system.available_memory())?)
+}
+
+#[cfg(target_os = "macos")]
+fn available_host_memory(_system: &System) -> Result<usize> {
+    static HOST_PORT: std::sync::OnceLock<libc::mach_port_t> = std::sync::OnceLock::new();
+    let mut stats = std::mem::MaybeUninit::<libc::vm_statistics64>::zeroed();
+    let mut count = libc::HOST_VM_INFO64_COUNT;
+    #[allow(deprecated)]
+    let host = *HOST_PORT.get_or_init(|| unsafe { libc::mach_host_self() });
+    let status = unsafe {
+        libc::host_statistics64(
+            host,
+            libc::HOST_VM_INFO64,
+            stats.as_mut_ptr().cast(),
+            &mut count,
+        )
+    };
+    if status != libc::KERN_SUCCESS {
+        candle_core::bail!("Cannot query macOS available memory: Mach error {status}");
+    }
+    let stats = unsafe { stats.assume_init() };
+    let page_size = usize::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) })?;
+    // XNU counts active, inactive, and free pages as available; free_count already includes speculative pages.
+    let pages = usize::try_from(stats.active_count)?
+        .saturating_add(usize::try_from(stats.inactive_count)?)
+        .saturating_add(usize::try_from(stats.free_count)?);
+    Ok(pages.saturating_mul(page_size))
 }
 
 #[cfg(feature = "cuda")]

@@ -654,11 +654,7 @@ impl DeviceMappedModelLoader for Qwen3EmbeddingLoader {
 
         let cfg: Qwen3EmbeddingConfig = serde_json::from_str(config)?;
 
-        Ok(
-            max_batch_size
-                * cfg.num_attention_heads
-                * max_seq_len.min(&ATTENTION_CHUNK_SIZE).pow(2),
-        )
+        Ok(cfg.workspace_size_elems(*max_batch_size, *max_seq_len))
     }
     fn non_mapped_max_act_size_elems(
         &self,

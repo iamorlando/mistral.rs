@@ -4,6 +4,8 @@ use candle_core::{Device, Tensor};
 use indexmap::IndexMap;
 use tokenizers::Tokenizer;
 
+use crate::embedding_models::memory::EncoderMemory;
+
 use super::{
     cache::{CacheKey, Role, ScoreKey, VectorCache},
     ClmHeads, DecisionPair, DecisionRequest, DecisionResponse, DecisionUsage,
@@ -28,21 +30,31 @@ struct InferenceState {
 pub(crate) struct ClmInference {
     heads: ClmHeads,
     state: Mutex<InferenceState>,
+    encoder_memory: EncoderMemory,
 }
 
 impl ClmInference {
-    pub fn new(heads: ClmHeads, device: &Device) -> anyhow::Result<Self> {
-        let cache = VectorCache::from_env(heads.projection_dim(), device)?;
-        Ok(Self::with_cache(heads, cache))
+    pub fn new(
+        heads: ClmHeads,
+        device: &Device,
+        encoder_memory: EncoderMemory,
+    ) -> anyhow::Result<Self> {
+        let cache = VectorCache::from_env(
+            heads.projection_dim(),
+            device,
+            encoder_memory.workspace_bytes(ENCODER_BATCH_TOKENS),
+        )?;
+        Ok(Self::with_cache(heads, cache, encoder_memory))
     }
 
-    fn with_cache(heads: ClmHeads, cache: VectorCache) -> Self {
+    fn with_cache(heads: ClmHeads, cache: VectorCache, encoder_memory: EncoderMemory) -> Self {
         Self {
             heads,
             state: Mutex::new(InferenceState {
                 cache,
                 calibrating: false,
             }),
+            encoder_memory,
         }
     }
 
@@ -114,7 +126,12 @@ impl ClmInference {
             input_tokens += ids.len();
             tokens.push(ids);
         }
-        let batches = encoder_batches(&tokens);
+        let token_budget = if tokens.is_empty() {
+            ENCODER_BATCH_TOKENS
+        } else {
+            self.encoder_memory.token_budget(ENCODER_BATCH_TOKENS)?
+        };
+        let batches = encoder_batches(&tokens, token_budget);
         for batch in &batches {
             let inputs: Vec<_> = batch.iter().map(|&i| tokens[i].as_slice()).collect();
             let xs = encode(&inputs)?;
@@ -188,6 +205,7 @@ impl ClmInference {
             hits,
             misses = keys.len() - hits,
             encoder_batches = batches.len(),
+            token_budget,
             input_tokens,
             "CLM inference"
         );
@@ -225,7 +243,7 @@ fn decision_response(
     })
 }
 
-fn encoder_batches(tokens: &[Vec<u32>]) -> Vec<Vec<usize>> {
+fn encoder_batches(tokens: &[Vec<u32>], token_budget: usize) -> Vec<Vec<usize>> {
     let mut order: Vec<_> = (0..tokens.len()).collect();
     order.sort_by_key(|&i| tokens[i].len());
     let mut batches = Vec::new();
@@ -234,7 +252,7 @@ fn encoder_batches(tokens: &[Vec<u32>]) -> Vec<Vec<usize>> {
         let len = tokens[index].len();
         if !batch.is_empty()
             && (batch.len() == ENCODER_BATCH_SIZE
-                || (batch.len() + 1) * len > ENCODER_BATCH_TOKENS
+                || (batch.len() + 1) * len > token_budget
                 || len > tokens[batch[0]].len() * MAX_PADDING_RATIO)
         {
             batches.push(std::mem::take(&mut batch));
@@ -284,11 +302,21 @@ mod tests {
         let make = |bytes| -> anyhow::Result<ClmInference> {
             let heads = ClmHeads::load(&path.join("heads.pt"), &config, &Device::Cpu)?;
             let cache = VectorCache::new(bytes, heads.projection_dim(), &Device::Cpu)?;
-            Ok(ClmInference::with_cache(heads, cache))
+            Ok(ClmInference::with_cache(
+                heads,
+                cache,
+                EncoderMemory::new(vec![Device::Cpu], 1)?,
+            ))
         };
         let cached = make(8192)?;
         let uncached = make(0)?;
         let tiny = make(16)?;
+        #[cfg(feature = "metal")]
+        let constrained = {
+            let mut inference = make(0)?;
+            inference.encoder_memory = EncoderMemory::constrained(Device::new_metal(0)?);
+            inference
+        };
         let tokenizer = Tokenizer::from_file(path.join("encoder/tokenizer.json"))
             .map_err(anyhow::Error::msg)?;
         let calls = Cell::new(0);
@@ -319,6 +347,14 @@ mod tests {
         let cold = run(&cached, &request)?;
         assert_eq!(encoded_texts.get(), 2);
         assert!(cold.usage.input_tokens > 0);
+        #[cfg(feature = "metal")]
+        {
+            let before = calls.get();
+            let small = run(&constrained, &request)?;
+            assert_eq!(calls.get() - before, 2);
+            assert_answers_close(&small, &cold)?;
+            assert_eq!(small.usage.input_tokens, cold.usage.input_tokens);
+        }
         let before = calls.get();
         let warm = run(&cached, &request)?;
         assert_eq!(calls.get(), before);
@@ -368,18 +404,23 @@ mod tests {
     fn batching_limits_padding_and_total_tokens() {
         let tokens = [2, 2, 4, 5, 6, 12, 12, 17, 19, 19, 2048].map(|len| vec![0; len]);
         assert_eq!(
-            encoder_batches(&tokens),
+            encoder_batches(&tokens, ENCODER_BATCH_TOKENS),
             [vec![0, 1, 2, 3, 4], vec![5, 6, 7, 8, 9], vec![10]]
         );
         let tokens = vec![vec![0; 4]; 65];
         assert_eq!(
-            encoder_batches(&tokens)
+            encoder_batches(&tokens, ENCODER_BATCH_TOKENS)
                 .iter()
                 .map(Vec::len)
                 .collect::<Vec<_>>(),
             [32, 32, 1]
         );
         let tokens = vec![vec![0; 1000]; 3];
-        assert_eq!(encoder_batches(&tokens), [vec![0, 1], vec![2]]);
+        assert_eq!(
+            encoder_batches(&tokens, ENCODER_BATCH_TOKENS),
+            [vec![0, 1], vec![2]]
+        );
+        assert_eq!(encoder_batches(&tokens, 1000), [vec![0], vec![1], vec![2]]);
+        assert_eq!(encoder_batches(&tokens, 1), [vec![0], vec![1], vec![2]]);
     }
 }
