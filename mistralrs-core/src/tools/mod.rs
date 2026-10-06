@@ -589,4 +589,32 @@ mod tests {
         );
         assert_eq!(matcher.get_call(&both).unwrap().len(), 2);
     }
+
+    #[test]
+    fn qwen_mixed_json_xml_matcher_preserves_call_order_and_indices() {
+        let tools: Vec<_> = ["first", "relaxed", "last", "relaxed_last"].into_iter().map(|name| {
+            let mut tool = test_tool(name);
+            tool.function.strict = Some(name == "first" || name == "last");
+            tool.function.parameters = Some(serde_json::from_value(json!({"type":"object", "properties":{"count":{"type":"integer"}}, "required":["count"]})).unwrap());
+            tool
+        }).collect();
+        let matcher = ToolCallingMatcher::new(ToolChoice::Auto, Some(&tools)).unwrap();
+        for (message, expected) in [
+            (concat!("<tool_call>{\"name\":\"first\",\"arguments\":{\"count\":1}}</tool_call>",
+                "<tool_call><function=relaxed><parameter=count>2</parameter></function></tool_call>",
+                "<tool_call>{\"name\":\"last\",\"arguments\":{\"count\":3}}</tool_call>"), ["first", "relaxed", "last"]),
+            (concat!("<tool_call><function=relaxed><parameter=count>1</parameter></function></tool_call>",
+                "<tool_call>{\"name\":\"first\",\"arguments\":{\"count\":2}}</tool_call>",
+                "<tool_call><function=relaxed_last><parameter=count>3</parameter></function></tool_call>"), ["relaxed", "first", "relaxed_last"]),
+        ] {
+            let calls = matcher.get_call(message).unwrap();
+            assert_eq!(calls.len(), 3);
+            for (index, (call, name)) in calls.iter().zip(expected).enumerate() {
+                assert_eq!(call.function.name, name);
+                assert_eq!(call.index, index);
+                let arguments: Value = serde_json::from_str(&call.function.arguments).unwrap();
+                assert_eq!(arguments["count"], json!(index + 1));
+            }
+        }
+    }
 }

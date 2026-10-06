@@ -1,0 +1,949 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "ai_lab__list_models_d46c7409f6",
+      "description": "List Jev, DeepSeek, Qwen, Laya, native CLM and upstream CLM, including undownloaded/stopped models, download sizes, run commands and saved seeded/watermarked profiles. Starts no model or service.",
+      "strict": true,
+      "parameters": {
+        "properties": {},
+        "title": "list_modelsArguments",
+        "type": "object"
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ai_lab__create_seeded_model_564214ce5d",
+      "description": "Create a named DeepSeek or Qwen profile with a deterministic seed (decimal or 0x hex, 0–9007199254740991). Does not download weights or start an API.",
+      "strict": true,
+      "parameters": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "seed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Seed"
+          },
+          "underlying_model": {
+            "default": "deepseek",
+            "enum": [
+              "deepseek",
+              "qwen",
+              "DeepSeekR1",
+              "Qwen3-8B"
+            ],
+            "title": "Underlying Model",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "seed"
+        ],
+        "title": "create_seeded_modelArguments",
+        "type": "object"
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ai_lab__create_watermarked_model_f842a6e8b3",
+      "description": "Create a persistent DeepSeek or Qwen watermark profile. All supported scheme settings are overridable via settings; see explain_watermarks. Optional key is 64 hex characters and overrides settings.key. If neither is supplied, generate and save a key. New SynthID defaults to tournament sampling, depth 4. No API is started. Saved settings/keys are reused across client sessions.",
+      "strict": true,
+      "parameters": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "scheme": {
+            "enum": [
+              "synthid",
+              "kgw",
+              "unigram",
+              "exponential",
+              "inverse_transform",
+              "mpac"
+            ],
+            "title": "Scheme",
+            "type": "string"
+          },
+          "seed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Seed"
+          },
+          "settings": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Settings"
+          },
+          "key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Key"
+          },
+          "underlying_model": {
+            "default": "deepseek",
+            "enum": [
+              "deepseek",
+              "qwen",
+              "DeepSeekR1",
+              "Qwen3-8B"
+            ],
+            "title": "Underlying Model",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "scheme"
+        ],
+        "title": "create_watermarked_modelArguments",
+        "type": "object"
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ai_lab__get_model_config_d7c63c898c",
+      "description": "Read a persistent model profile by key or exact name, including its seed and every watermark setting. Set include_watermark_key=true to retrieve its saved watermark key explicitly; otherwise the key is hidden. Does not return Jev/API credentials or start any service.",
+      "strict": true,
+      "parameters": {
+        "properties": {
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "include_watermark_key": {
+            "default": false,
+            "title": "Include Watermark Key",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "model"
+        ],
+        "title": "get_model_configArguments",
+        "type": "object"
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ai_lab__update_watermarked_model_3468c471e2",
+      "description": "Persist key/scheme/setting overrides on an existing generation profile, keeping its ID, name and seed. All supported watermark settings are overridable. Omitted fields retain saved values; a scheme change retains the key and resets scheme-specific settings. Explicit key overrides settings.key. New sessions inherit the saved configuration; existing session snapshots remain intact. Starts no API.",
+      "strict": true,
+      "parameters": {
+        "properties": {
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "scheme": {
+            "anyOf": [
+              {
+                "enum": [
+                  "synthid",
+                  "kgw",
+                  "unigram",
+                  "exponential",
+                  "inverse_transform",
+                  "mpac"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scheme"
+          },
+          "key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Key"
+          },
+          "settings": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Settings"
+          },
+          "underlying_model": {
+            "anyOf": [
+              {
+                "enum": [
+                  "deepseek",
+                  "qwen",
+                  "DeepSeekR1",
+                  "Qwen3-8B"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Underlying Model"
+          }
+        },
+        "required": [
+          "model"
+        ],
+        "title": "update_watermarked_modelArguments",
+        "type": "object"
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ai_lab__generate_text_63278dea58",
+      "description": "Generate real text with DeepSeek/Qwen or a saved profile key/exact name. Omitted scheme/key/settings inherit the profile watermark; scheme=none disables it for this call. Optional overrides and seed never change the saved profile. Plain backend selection is unwatermarked unless explicit scheme/key are supplied. Keys are hidden in all ordinary results. Returns actual answer, usage and optional native sampling trace with selected backend identity. Requires ai-lab models run --deepseek or --qwen first. Never starts/downloads models; decision encoders do not generate text.",
+      "strict": true,
+      "parameters": {
+        "properties": {
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "model": {
+            "default": "deepseek",
+            "title": "Model",
+            "type": "string"
+          },
+          "scheme": {
+            "anyOf": [
+              {
+                "enum": [
+                  "synthid",
+                  "kgw",
+                  "unigram",
+                  "exponential",
+                  "inverse_transform",
+                  "mpac"
+                ],
+                "type": "string"
+              },
+              {
+                "const": "none",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scheme"
+          },
+          "key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Key"
+          },
+          "settings": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Settings"
+          },
+          "seed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Seed"
+          },
+          "max_tokens": {
+            "default": 1024,
+            "title": "Max Tokens",
+            "type": "integer"
+          },
+          "temperature": {
+            "default": 0.8,
+            "title": "Temperature",
+            "type": "number"
+          },
+          "capture_trace": {
+            "default": false,
+            "title": "Capture Trace",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "title": "generate_textArguments",
+        "type": "object"
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ai_lab__detect_watermark_07f596f621",
+      "description": "Detect a watermark in supplied text. Choose model=deepseek or qwen with explicit scheme/key/settings, or a saved profile key/name to reuse its persisted settings and key. Every watermark/detector setting can be overridden for this call; explicit key wins over settings.key and the saved key. Returns native stats, match/no_match/insufficient verdict, p-value, confidence, scored-token count and test method. Confidence is 1-p_value from a known-key test/bound, not authorship probability. Short/unscorable text is insufficient; no confidence is invented. Requires ai-lab models run --deepseek or --qwen for the selected backend. Does not save overrides or start/download any model.",
+      "strict": true,
+      "parameters": {
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "model": {
+            "default": "deepseek",
+            "title": "Model",
+            "type": "string"
+          },
+          "scheme": {
+            "anyOf": [
+              {
+                "enum": [
+                  "synthid",
+                  "kgw",
+                  "unigram",
+                  "exponential",
+                  "inverse_transform",
+                  "mpac"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scheme"
+          },
+          "key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Key"
+          },
+          "settings": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Settings"
+          },
+          "prompt_len": {
+            "default": 0,
+            "title": "Prompt Len",
+            "type": "integer"
+          },
+          "eos_token_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Eos Token Ids"
+          },
+          "add_special_tokens": {
+            "default": false,
+            "title": "Add Special Tokens",
+            "type": "boolean"
+          },
+          "p_value_threshold": {
+            "default": 0.001,
+            "title": "P Value Threshold",
+            "type": "number"
+          },
+          "min_tokens": {
+            "default": 20,
+            "title": "Min Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "detect_watermarkArguments",
+        "type": "object"
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ai_lab__download_models_bf65014851",
+      "description": "Download missing local weights and install their server dependencies; reuse verified files and resume interrupted downloads. Omit models for all families. Both CLM APIs share the clm weights. Jev needs no download. Can be large: inspect list_models first. Does not start model APIs.",
+      "strict": true,
+      "parameters": {
+        "properties": {
+          "models": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "deepseek",
+                    "qwen",
+                    "clm",
+                    "contrastive",
+                    "clm-upstream",
+                    "laya",
+                    "jev"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Models"
+          }
+        },
+        "title": "download_modelsArguments",
+        "type": "object"
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ai_lab__explain_watermarks_0ce846ac49",
+      "description": "Explain supported watermark schemes with paper titles/links and exact configuration fields. Omit scheme to compare all six. Explains green/red membership and production versus teaching tournaments.",
+      "strict": true,
+      "parameters": {
+        "properties": {
+          "scheme": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scheme"
+          }
+        },
+        "title": "explain_watermarksArguments",
+        "type": "object"
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ai_lab__answer_decisions_c5926c028b",
+      "description": "Answer 1–64 typed questions about a text/JSON state. Each ID maps to {type: choice|score|noul, instructions, criteria}. Choice criteria are named options; score criteria are 2–10 ordered levels; noul asks yes/no. Requires explicit model=laya, contrastive (native CLM) or clm-upstream. Uses only the selected already-running local API; there is no hosted default or fallback. Does not start or download models. Returns actual probabilities and usage without fabricated explanations.",
+      "strict": true,
+      "parameters": {
+        "$defs": {
+          "DecisionQuestion": {
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "enum": [
+                  "choice",
+                  "score",
+                  "noul"
+                ],
+                "title": "Type",
+                "type": "string"
+              },
+              "instructions": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "items": {},
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Instructions"
+              },
+              "criteria": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "items": {},
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Criteria"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "title": "DecisionQuestion",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "items": {},
+                "type": "array"
+              }
+            ],
+            "title": "State"
+          },
+          "questions": {
+            "additionalProperties": {
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "enum": [
+                    "choice",
+                    "score",
+                    "noul"
+                  ],
+                  "title": "Type",
+                  "type": "string"
+                },
+                "instructions": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "additionalProperties": true,
+                      "type": "object"
+                    },
+                    {
+                      "items": {},
+                      "type": "array"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Instructions"
+                },
+                "criteria": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": true,
+                      "type": "object"
+                    },
+                    {
+                      "items": {},
+                      "type": "array"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Criteria"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "title": "DecisionQuestion",
+              "type": "object"
+            },
+            "title": "Questions",
+            "type": "object"
+          },
+          "model": {
+            "type": "string",
+            "enum": [
+              "contrastive",
+              "clm-upstream",
+              "laya"
+            ]
+          }
+        },
+        "required": [
+          "state",
+          "questions",
+          "model"
+        ],
+        "title": "answer_decisionsArguments",
+        "type": "object"
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ai_lab__rank_decisions_e901e12e77",
+      "description": "Rank 2–255 candidate answers/actions using the selected local provider's structured choice API. Requires explicit model=laya, contrastive (native CLM) or clm-upstream. Uses only the selected already-running local API; there is no hosted default or fallback. Does not start or download models. Returns the original candidates and measured probabilities.",
+      "strict": true,
+      "parameters": {
+        "properties": {
+          "context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "items": {},
+                "type": "array"
+              }
+            ],
+            "title": "Context"
+          },
+          "answers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Answers",
+            "type": "array"
+          },
+          "question": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Question"
+          },
+          "model": {
+            "type": "string",
+            "enum": [
+              "contrastive",
+              "clm-upstream",
+              "laya"
+            ]
+          }
+        },
+        "required": [
+          "context",
+          "answers",
+          "model"
+        ],
+        "title": "rank_decisionsArguments",
+        "type": "object"
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ai_lab__inspect_next_token_30bd754360",
+      "description": "Inspect one exact raw prefix with a saved DeepSeek or Qwen profile key/name. Optional scheme/key/settings override the saved watermark only for this call; use update_watermarked_model to persist changes. Requires the selected backend started with ai-lab models run --deepseek or --qwen first. Saves the native trace and returns an inspection_id for green/red lists and tournament results. Never applies a chat template to your prefix.",
+      "strict": true,
+      "parameters": {
+        "properties": {
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "temperature": {
+            "default": 1,
+            "title": "Temperature",
+            "type": "number"
+          },
+          "scheme": {
+            "anyOf": [
+              {
+                "enum": [
+                  "synthid",
+                  "kgw",
+                  "unigram",
+                  "exponential",
+                  "inverse_transform",
+                  "mpac"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scheme"
+          },
+          "key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Key"
+          },
+          "settings": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Settings"
+          }
+        },
+        "required": [
+          "model",
+          "prompt"
+        ],
+        "title": "inspect_next_tokenArguments",
+        "type": "object"
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ai_lab__list_results_ba40f304ef",
+      "description": "List saved MCP inspections, CLI sessions and website watermark experiments. Returns source IDs for get_green_red_lists/get_tournament_results. No model API is needed.",
+      "strict": true,
+      "parameters": {
+        "properties": {},
+        "title": "list_resultsArguments",
+        "type": "object"
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ai_lab__get_green_red_lists_1daa39bc4b",
+      "description": "Show native green/red membership. For SynthID probability updates, layer selects a captured probability layer; for production tournaments, it selects a captured round and returns entrant draw IDs and g scores. Defaults to the last captured layer/round. Reports capture limits and never claims full-vocabulary membership. source can be inspection, session or watermark; watermark requires its agent_id.",
+      "strict": true,
+      "parameters": {
+        "properties": {
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source": {
+            "default": "inspection",
+            "enum": [
+              "inspection",
+              "session",
+              "watermark"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "step": {
+            "default": 0,
+            "title": "Step",
+            "type": "integer"
+          },
+          "layer": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Layer"
+          },
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Agent Id"
+          }
+        },
+        "required": [
+          "source_id"
+        ],
+        "title": "get_green_red_listsArguments",
+        "type": "object"
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ai_lab__get_tournament_results_c17f49ad98",
+      "description": "Show the saved production tournament, winner, draws, matches, collapsed subtrees and capture limits. Keeps any teaching simulation separate. Short-prefix warmup and omitted brackets have no winner and are reported explicitly. source can be inspection, session or watermark; watermark requires agent_id.",
+      "strict": true,
+      "parameters": {
+        "properties": {
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source": {
+            "default": "inspection",
+            "enum": [
+              "inspection",
+              "session",
+              "watermark"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "step": {
+            "default": 0,
+            "title": "Step",
+            "type": "integer"
+          },
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Agent Id"
+          }
+        },
+        "required": [
+          "source_id"
+        ],
+        "title": "get_tournament_resultsArguments",
+        "type": "object"
+      }
+    }
+  }
+]

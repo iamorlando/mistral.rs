@@ -149,6 +149,12 @@ impl ToolCallState {
         self.strategy.finalize();
     }
 
+    pub(crate) fn requires_strict_grammar(&self) -> bool {
+        self.matcher
+            .tools()
+            .is_some_and(|tools| tools.iter().any(|tool| tool.function.strict == Some(true)))
+    }
+
     pub(crate) fn maybe_activate_continuation_grammar(
         &mut self,
         text: Option<&str>,
@@ -388,6 +394,39 @@ mod tests {
 
         assert!(lark(&grammar).contains("json_call"));
         assert_eq!(grammar.grammars.len(), 2);
+    }
+
+    #[test]
+    fn strict_auto_tools_only_activate_after_a_real_model_call_prefix() {
+        let tools: Vec<Tool> =
+            serde_json::from_str(include_str!("../../tests/fixtures/qwen-strict-tools.json"))
+                .unwrap();
+        let mut state =
+            ToolCallState::new(ToolChoice::Auto, Some(&tools), Some(ToolCallFormat::Qwen)).unwrap();
+        assert!(state.requires_strict_grammar());
+        assert!(state.maybe_force_required_grammar(0, 8192, true).is_none());
+        assert!(state
+            .maybe_activate_continuation_grammar(Some("ordinary answer"))
+            .is_none());
+        let grammar = state
+            .maybe_activate_continuation_grammar(Some("<tool_call>"))
+            .unwrap();
+        assert!(!grammar.grammars[0]
+            .lark_grammar
+            .as_ref()
+            .unwrap()
+            .contains("xml_call"));
+        let mut ordinary = ToolCallState::new(ToolChoice::Auto, None, None).unwrap();
+        assert!(!ordinary.requires_strict_grammar());
+        assert!(ordinary
+            .maybe_activate_continuation_grammar(Some("ordinary answer"))
+            .is_none());
+        let mut disabled =
+            ToolCallState::new(ToolChoice::None, Some(&tools), Some(ToolCallFormat::Qwen)).unwrap();
+        assert!(disabled.requires_strict_grammar());
+        assert!(disabled
+            .maybe_activate_continuation_grammar(Some("<tool_call>"))
+            .is_none());
     }
 
     #[test]

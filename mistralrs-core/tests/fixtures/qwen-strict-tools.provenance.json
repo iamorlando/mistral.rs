@@ -1,0 +1,13 @@
+{
+  "source": "AI Lab real own stdio MCP discovery, reference-safe native transport snapshot",
+  "captured_artifact": "item2-strict-model-tools.json",
+  "snapshot_sha256": "c985ba157adbd3cda6168bc1eb3266f65c6a0cde55f7f1c10f2e55148f56f85d",
+  "tool_count": 15,
+  "producer_status_at_capture": "committed_cpu_candidate",
+  "producer_base_commit": "3579a163f98ae78d67d552a1a377b5b6c538b8d6",
+  "schema_dialect": "Draft 2020-12; acyclic local JSON pointers expanded only in schema positions",
+  "purpose": "CPU llguidance grammar compilation/mask regression fixture; not model generation or release proof",
+  "original_host_schemas_unchanged": true,
+  "tool_choice": "auto unchanged",
+  "producer_commit": "aedc0966352a8b680862ef1a7eb4c5156079bc64"
+}

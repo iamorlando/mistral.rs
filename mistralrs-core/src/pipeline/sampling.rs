@@ -105,6 +105,51 @@ fn activate_required_tool_call_grammar(
     }
 }
 
+fn activate_continuation_tool_call_grammar(
+    seq: &mut Sequence,
+    factory: Option<&Arc<llguidance::ParserFactory>>,
+    text: Option<&str>,
+) -> Result<()> {
+    let grm = seq
+        .tool_call_state
+        .as_mut()
+        .and_then(|state| state.maybe_activate_continuation_grammar(text));
+
+    if let Some(grm) = grm {
+        let strict = seq
+            .tool_call_state
+            .as_ref()
+            .is_some_and(ToolCallState::requires_strict_grammar);
+        if let Some(factory) = factory {
+            match crate::pipeline::llg::constraint_from_llg_grammar(factory, grm) {
+                Ok(matcher) => {
+                    tracing::debug!("Activated tool call grammar");
+                    seq.recognizer = SequenceRecognizer::Llguidance(Box::new(matcher));
+                    if let Some(state) = seq.tool_call_state.as_mut() {
+                        state.mark_grammar_active(false);
+                    }
+                }
+                Err(e) => {
+                    if strict {
+                        return Err(candle_core::Error::msg(format!(
+                            "Failed to build strict tool call grammar: {e}"
+                        )));
+                    }
+                    tracing::warn!(
+                        "Failed to build tool call grammar: {e}. \
+                         Continuing without constraint."
+                    );
+                }
+            }
+        } else if strict {
+            return Err(candle_core::Error::msg(
+                "Strict tool calls require an llguidance tokenizer factory",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn append_hidden_stop(mut text: Option<String>, hidden_stop: Option<&str>) -> Option<String> {
     if let (Some(text), Some(hidden_stop)) = (&mut text, hidden_stop) {
         text.push_str(hidden_stop);
@@ -250,30 +295,11 @@ pub(crate) async fn finish_or_add_toks_to_seq(
     // re-activate the grammar on a completed sequence.
     if matches!(seq.recognizer, SequenceRecognizer::None) && is_done.is_none() {
         let text = tool_detection_text(seq, None);
-        let grm = seq
-            .tool_call_state
-            .as_mut()
-            .and_then(|state| state.maybe_activate_continuation_grammar(text.as_deref()));
-
-        if let Some(grm) = grm {
-            if let Some(ref factory) = metadata.llg_factory {
-                match crate::pipeline::llg::constraint_from_llg_grammar(factory, grm) {
-                    Ok(matcher) => {
-                        tracing::debug!("Activated tool call grammar");
-                        seq.recognizer = SequenceRecognizer::Llguidance(Box::new(matcher));
-                        if let Some(state) = seq.tool_call_state.as_mut() {
-                            state.mark_grammar_active(false);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to build tool call grammar: {e}. \
-                             Continuing without constraint."
-                        );
-                    }
-                }
-            }
-        }
+        activate_continuation_tool_call_grammar(
+            seq,
+            metadata.llg_factory.as_ref(),
+            text.as_deref(),
+        )?;
     }
 
     if is_done.is_some() {
@@ -2307,5 +2333,123 @@ mod tests {
             cuda_token_batch_will_finish_with_metadata(&seqs, &[7], &[], &[], 1024, false,)
                 .is_err()
         );
+    }
+
+    fn strict_tool_test_catalog() -> Vec<Tool> {
+        serde_json::from_str(include_str!("../../tests/fixtures/qwen-strict-tools.json")).unwrap()
+    }
+
+    fn continuation_test_sequence(tools: Option<&[Tool]>, choice: ToolChoice) -> Sequence {
+        let mut seq = terminal_test_sequence(vec![], None, false);
+        seq.tool_call_state = Some(
+            ToolCallState::new(choice, tools, Some(crate::tools::ToolCallFormat::Qwen)).unwrap(),
+        );
+        seq
+    }
+
+    fn continuation_test_factory() -> Arc<llguidance::ParserFactory> {
+        struct ByteEnv(toktrie::TokTrie);
+        impl toktrie::TokenizerEnv for ByteEnv {
+            fn tok_trie(&self) -> &toktrie::TokTrie {
+                &self.0
+            }
+            fn tokenize_bytes(&self, bytes: &[u8]) -> Vec<toktrie::TokenId> {
+                self.0.greedy_tokenize(bytes)
+            }
+            fn tokenize_is_canonical(&self) -> bool {
+                false
+            }
+        }
+        let mut tokens: Vec<_> = (0u8..=127).map(|b| vec![b]).collect();
+        let eos = u32::try_from(tokens.len()).unwrap();
+        tokens.push(b"\xff<eos>".to_vec());
+        tokens.push(b"\xff<tool_call>".to_vec());
+        tokens.push(b"\xff</tool_call>".to_vec());
+        let trie = toktrie::TokTrie::from(
+            &toktrie::TokRxInfo::new(u32::try_from(tokens.len()).unwrap(), eos),
+            &tokens,
+        );
+        let env: toktrie::TokEnv = Arc::new(ByteEnv(trie));
+        Arc::new(llguidance::ParserFactory::new_simple(&env).unwrap())
+    }
+
+    #[test]
+    fn strict_continuation_guard_errors_on_missing_factory_and_compile_failure() {
+        let tools = strict_tool_test_catalog();
+        let mut seq = continuation_test_sequence(Some(&tools), ToolChoice::Auto);
+        let error = activate_continuation_tool_call_grammar(&mut seq, None, Some("<tool_call>"))
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Strict tool calls require an llguidance tokenizer factory"));
+        assert!(matches!(seq.recognizer, SequenceRecognizer::None));
+        assert!(!seq.tool_call_state.as_mut().unwrap().clear_active_grammar());
+        let mut unsupported = tools[0].clone();
+        unsupported.function.parameters =
+            Some(serde_json::from_value(serde_json::json!({"type":"unsupported-type"})).unwrap());
+        let mut seq = continuation_test_sequence(Some(&[unsupported]), ToolChoice::Auto);
+        let factory = continuation_test_factory();
+        let error =
+            activate_continuation_tool_call_grammar(&mut seq, Some(&factory), Some("<tool_call>"))
+                .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Failed to build strict tool call grammar"));
+        assert!(matches!(seq.recognizer, SequenceRecognizer::None));
+        assert!(!seq.tool_call_state.as_mut().unwrap().clear_active_grammar());
+    }
+
+    #[test]
+    fn continuation_guard_keeps_nonstrict_missing_factory_and_compile_fallback() {
+        let mut tool = strict_tool_test_catalog()[0].clone();
+        tool.function.strict = None;
+        let mut seq = continuation_test_sequence(Some(&[tool.clone()]), ToolChoice::Auto);
+        activate_continuation_tool_call_grammar(&mut seq, None, Some("<tool_call>")).unwrap();
+        assert!(matches!(seq.recognizer, SequenceRecognizer::None));
+        tool.function.parameters =
+            Some(serde_json::from_value(serde_json::json!({"type":"unsupported-type"})).unwrap());
+        let mut seq = continuation_test_sequence(Some(&[tool]), ToolChoice::Auto);
+        let factory = continuation_test_factory();
+        activate_continuation_tool_call_grammar(&mut seq, Some(&factory), Some("<tool_call>"))
+            .unwrap();
+        assert!(matches!(seq.recognizer, SequenceRecognizer::None));
+        assert!(!seq.tool_call_state.as_mut().unwrap().clear_active_grammar());
+    }
+
+    #[test]
+    fn continuation_guard_leaves_no_prefix_no_tools_and_none_choice_unconstrained() {
+        let tools = strict_tool_test_catalog();
+        for text in [None, Some("ordinary answer")] {
+            let mut seq = continuation_test_sequence(Some(&tools), ToolChoice::Auto);
+            activate_continuation_tool_call_grammar(&mut seq, None, text).unwrap();
+            assert!(matches!(seq.recognizer, SequenceRecognizer::None));
+        }
+        for (tools, choice) in [
+            (None, ToolChoice::Auto),
+            (Some(tools.as_slice()), ToolChoice::None),
+        ] {
+            let mut seq = continuation_test_sequence(tools, choice);
+            activate_continuation_tool_call_grammar(&mut seq, None, Some("<tool_call>")).unwrap();
+            assert!(matches!(seq.recognizer, SequenceRecognizer::None));
+        }
+        let mut seq = terminal_test_sequence(vec![], None, false);
+        activate_continuation_tool_call_grammar(&mut seq, None, Some("<tool_call>")).unwrap();
+        assert!(matches!(seq.recognizer, SequenceRecognizer::None));
+    }
+
+    #[test]
+    fn continuation_guard_activates_valid_full_catalog_without_forcing_a_call() {
+        let tools = strict_tool_test_catalog();
+        let factory = continuation_test_factory();
+        let mut seq = continuation_test_sequence(Some(&tools), ToolChoice::Auto);
+        activate_continuation_tool_call_grammar(&mut seq, Some(&factory), Some("ordinary answer"))
+            .unwrap();
+        assert!(matches!(seq.recognizer, SequenceRecognizer::None));
+        activate_continuation_tool_call_grammar(&mut seq, Some(&factory), Some("<tool_call>"))
+            .unwrap();
+        assert!(matches!(seq.recognizer, SequenceRecognizer::Llguidance(_)));
+        let state = seq.tool_call_state.as_mut().unwrap();
+        assert!(state.maybe_force_required_grammar(0, 8192, true).is_none());
+        assert!(state.clear_active_grammar());
     }
 }
