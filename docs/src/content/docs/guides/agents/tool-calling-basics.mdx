@@ -30,6 +30,14 @@ Tool calling lets the model request external work via a structured invocation. m
 }
 ```
 
+## Required Qwen fallback
+
+A completed native tool call satisfies `tool_choice: "required"` once its owned active grammar accepts the boundary and the output parses as a declared call. Normal parallel decoding can then continue with ordered calls or end with the model's EOS.
+
+For plain `"required"` with Qwen text framing, deadline or EOS forcing uses a finite grammar and ends the turn after one accepted, successfully parsed native call. This deliberately serializes a forced batch to one call for approval and result handling. It retains the full tool catalog, strict JSON schemas, and XML eligibility for nonstrict tools. Streaming and nonstreaming use the same completion boundary.
+
+`"auto"` and spontaneously activated Required calls retain parallel decoding. Named selections, allowed-tools Required, and other framing strategies retain their existing selection and cardinality. Generation limits and cancellation still apply.
+
 ## The two modes
 
 **Client-side loop.** Standard OpenAI flow: the model emits a `tool_calls` field, the caller runs the tool, sends the result back as a `tool` message, and the model produces another response.

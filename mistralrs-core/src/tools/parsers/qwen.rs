@@ -33,7 +33,7 @@ impl ToolFormatParser for QwenParser {
 
     fn tool_call_grammar(&self, tools: &[Tool], _text: &str) -> TopLevelGrammar {
         crate::tools::grammar::build_json_format_grammar(
-            qwen_tool_call_lark(tools, false),
+            qwen_tool_call_lark(tools, false, false),
             tools,
             "arguments",
             false,
@@ -42,7 +42,7 @@ impl ToolFormatParser for QwenParser {
 
     fn required_tool_call_grammar(&self, tools: &[Tool]) -> TopLevelGrammar {
         crate::tools::grammar::build_json_format_grammar(
-            qwen_tool_call_lark(tools, true),
+            qwen_tool_call_lark(tools, true, false),
             tools,
             "arguments",
             false,
@@ -61,7 +61,18 @@ impl ToolFormatParser for QwenParser {
     }
 }
 
-fn qwen_tool_call_lark(tools: &[Tool], include_wrapper: bool) -> String {
+impl QwenParser {
+    pub(crate) fn single_call_required_grammar(tools: &[Tool]) -> TopLevelGrammar {
+        crate::tools::grammar::build_json_format_grammar(
+            qwen_tool_call_lark(tools, true, true),
+            tools,
+            "arguments",
+            false,
+        )
+    }
+}
+
+fn qwen_tool_call_lark(tools: &[Tool], include_wrapper: bool, single_call: bool) -> String {
     let xml_tools = tools
         .iter()
         .filter(|tool| tool.function.strict != Some(true))
@@ -72,7 +83,9 @@ fn qwen_tool_call_lark(tools: &[Tool], include_wrapper: bool) -> String {
     } else {
         "(json_call | xml_call)"
     };
-    let start = if include_wrapper {
+    let start = if single_call {
+        format!(r#"start: "<tool_call>" {call}"#)
+    } else if include_wrapper {
         format!(r#"start: "<tool_call>" {call} ("\n"? "<tool_call>" {call})*"#)
     } else {
         format!(r#"start: {call} ("\n"? <tool_call> {call})*"#)
@@ -622,12 +635,8 @@ print(1 < 2)
         matcher.is_stopped()
     }
 
-    #[test]
-    fn full_strict_catalog_compiles_and_accepts_every_tool_in_auto_continuation() {
-        let tools = strict_catalog();
-        assert_eq!(tools.len(), 15);
-        assert!(tools.iter().all(|tool| tool.function.strict == Some(true)));
-        let cases = [
+    fn strict_catalog_cases() -> [(&'static str, Value); 15] {
+        [
             ("list_models", json!({})),
             ("create_seeded_model", json!({"name": "saved", "seed": 42})),
             (
@@ -657,8 +666,15 @@ print(1 < 2)
             ("list_results", json!({})),
             ("get_green_red_lists", json!({"source_id": "saved"})),
             ("get_tournament_results", json!({"source_id": "saved"})),
-        ];
-        for (suffix, arguments) in cases {
+        ]
+    }
+
+    #[test]
+    fn full_strict_catalog_compiles_and_accepts_every_tool_in_auto_continuation() {
+        let tools = strict_catalog();
+        assert_eq!(tools.len(), 15);
+        assert!(tools.iter().all(|tool| tool.function.strict == Some(true)));
+        for (suffix, arguments) in strict_catalog_cases() {
             let tool = tools
                 .iter()
                 .find(|tool| tool.function.name.contains(&format!("__{suffix}_")))
@@ -987,5 +1003,101 @@ print(1 < 2)
         assert!(matcher.compute_mask().unwrap().is_allowed(trie.eos_token()));
         matcher.consume_token(trie.eos_token()).unwrap();
         assert!(matcher.is_stopped());
+    }
+
+    #[test]
+    fn required_obligation_finite_full15_grammar_keeps_schemas_and_rejects_a_second_call() {
+        let tools = strict_catalog();
+        let trie = wrapper_token_trie();
+        let env: toktrie::TokEnv = Arc::new(GreedyTokenizerEnv { trie: trie.clone() });
+        let factory = llguidance::ParserFactory::new_simple(&env).unwrap();
+        for (suffix, arguments) in strict_catalog_cases() {
+            let tool = tools
+                .iter()
+                .find(|tool| tool.function.name.contains(&format!("__{suffix}_")))
+                .unwrap();
+            let mut grammar = QwenParser::single_call_required_grammar(&tools);
+            assert_eq!(
+                grammar.grammars[1].json_schema,
+                QwenParser.required_tool_call_grammar(&tools).grammars[1].json_schema
+            );
+            assert!(!grammar.grammars[0]
+                .lark_grammar
+                .as_ref()
+                .unwrap()
+                .contains("xml_call"));
+            specialize_required_tool_call_grammar(&mut grammar, &trie);
+            let mut matcher = llguidance::Matcher::new(Ok(factory.create_parser(grammar).unwrap()));
+            let open = trie.get_special_token("<tool_call>").unwrap();
+            assert!(matcher.compute_mask().unwrap().is_allowed(open));
+            matcher.consume_token(open).unwrap();
+            let body = json!({"name":tool.function.name, "arguments":arguments}).to_string();
+            assert!(consume_allowed(&mut matcher, &trie, &body), "{suffix}");
+            let close = trie.get_special_token("</tool_call>").unwrap();
+            assert!(matcher.compute_mask().unwrap().is_allowed(close));
+            matcher.consume_token(close).unwrap();
+            let mask = matcher.compute_mask_or_eos().unwrap();
+            assert!(mask.is_allowed(trie.eos_token()));
+            assert!(!mask.is_allowed(open));
+            assert!(matcher.is_stopped() || matcher.is_accepting().unwrap());
+        }
+    }
+
+    fn accepts_finite_required_body(tools: &[crate::Tool], body: &str) -> bool {
+        let trie = wrapper_token_trie();
+        let env: toktrie::TokEnv = Arc::new(GreedyTokenizerEnv { trie: trie.clone() });
+        let factory = llguidance::ParserFactory::new_simple(&env).unwrap();
+        let mut grammar = QwenParser::single_call_required_grammar(tools);
+        specialize_required_tool_call_grammar(&mut grammar, &trie);
+        let mut matcher = llguidance::Matcher::new(Ok(factory.create_parser(grammar).unwrap()));
+        let open = trie.get_special_token("<tool_call>").unwrap();
+        matcher.consume_token(open).unwrap();
+        if !consume_allowed(&mut matcher, &trie, body) {
+            return false;
+        }
+        let close = trie.get_special_token("</tool_call>").unwrap();
+        if !matcher.compute_mask().unwrap().is_allowed(close) {
+            return false;
+        }
+        matcher.consume_token(close).unwrap();
+        matcher.is_stopped() || matcher.is_accepting().unwrap()
+    }
+
+    #[test]
+    fn required_obligation_finite_masks_reject_missing_nested_types_enums_unknown_and_prose() {
+        let tools = strict_catalog();
+        let tool = decision_tool();
+        let valid = json!({"name": tool.function.name, "arguments": {"state":"test", "questions":{"pick":{"type":"choice"}}, "model":"laya"}});
+        assert!(accepts_finite_required_body(&tools, &valid.to_string()));
+        for field in ["state", "questions", "model"] {
+            let mut invalid = valid.clone();
+            invalid["arguments"].as_object_mut().unwrap().remove(field);
+            assert!(
+                !accepts_finite_required_body(&tools, &invalid.to_string()),
+                "missing {field}"
+            );
+        }
+        for questions in [
+            json!("a string"),
+            json!(null),
+            json!([]),
+            json!({"pick":"a string"}),
+            json!({"pick":{}}),
+            json!({"pick":{"type":"invalid"}}),
+            json!({"pick":{"type":"choice","unknown":true}}),
+        ] {
+            let mut invalid = valid.clone();
+            invalid["arguments"]["questions"] = questions;
+            assert!(!accepts_finite_required_body(&tools, &invalid.to_string()));
+        }
+        for model in [json!("unknown"), json!(null)] {
+            let mut invalid = valid.clone();
+            invalid["arguments"]["model"] = model;
+            assert!(!accepts_finite_required_body(&tools, &invalid.to_string()));
+        }
+        let mut unknown = valid.clone();
+        unknown["name"] = json!("undeclared");
+        assert!(!accepts_finite_required_body(&tools, &unknown.to_string()));
+        assert!(!accepts_finite_required_body(&tools, "plain prose"));
     }
 }

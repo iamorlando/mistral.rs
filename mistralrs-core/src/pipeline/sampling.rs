@@ -90,7 +90,7 @@ fn activate_required_tool_call_grammar(
         Ok(matcher) => {
             seq.recognizer = SequenceRecognizer::Llguidance(Box::new(matcher));
             if let Some(state) = seq.tool_call_state.as_mut() {
-                state.mark_grammar_active(true);
+                state.mark_grammar_active(true, None);
             }
             tracing::info!(
                 generated_tokens = generated,
@@ -110,6 +110,9 @@ fn activate_continuation_tool_call_grammar(
     factory: Option<&Arc<llguidance::ParserFactory>>,
     text: Option<&str>,
 ) -> Result<()> {
+    if matches!(seq.getstate(), SequenceState::Done(_)) {
+        return Ok(());
+    }
     let grm = seq
         .tool_call_state
         .as_mut()
@@ -126,7 +129,7 @@ fn activate_continuation_tool_call_grammar(
                     tracing::debug!("Activated tool call grammar");
                     seq.recognizer = SequenceRecognizer::Llguidance(Box::new(matcher));
                     if let Some(state) = seq.tool_call_state.as_mut() {
-                        state.mark_grammar_active(false);
+                        state.mark_grammar_active(false, text);
                     }
                 }
                 Err(e) => {
@@ -148,6 +151,32 @@ fn activate_continuation_tool_call_grammar(
         }
     }
     Ok(())
+}
+
+fn complete_active_tool_call_grammar(seq: &mut Sequence) -> Result<bool> {
+    if matches!(seq.getstate(), SequenceState::Done(StopReason::Canceled))
+        || !seq
+            .tool_call_state
+            .as_ref()
+            .is_some_and(ToolCallState::has_active_grammar)
+    {
+        return Ok(false);
+    }
+    let SequenceRecognizer::Llguidance(matcher) = &mut seq.recognizer else {
+        return Ok(false);
+    };
+    let accepting =
+        matcher.is_stopped() || matcher.is_accepting().map_err(candle_core::Error::msg)?;
+    let complete = seq
+        .tool_call_state
+        .as_mut()
+        .is_some_and(|state| state.complete_active_grammar(accepting));
+    if complete {
+        seq.set_state(SequenceState::Done(StopReason::Eos));
+        seq.tool_call_state.as_mut().unwrap().clear_active_grammar();
+        seq.recognizer = SequenceRecognizer::None;
+    }
+    Ok(complete)
 }
 
 fn append_hidden_stop(mut text: Option<String>, hidden_stop: Option<&str>) -> Option<String> {
@@ -268,6 +297,10 @@ pub(crate) async fn finish_or_add_toks_to_seq(
         }) => Some(seq.stop_strings()[stop_string_idx].clone()),
         _ => None,
     };
+
+    if !matches!(is_done, Some(StopReason::Canceled)) && complete_active_tool_call_grammar(seq)? {
+        is_done = Some(StopReason::Eos);
+    }
 
     // If we can have a tool and we got a tool, stop the sequence early.
     // Doesn't conflict with the logic below because it does the same thing anyway.
@@ -1538,6 +1571,8 @@ pub async fn sample_sequence(
         first_sample(logits_clone, ctx_clone, rng_clone, 0)?
     };
 
+    complete_active_tool_call_grammar(seq)?;
+
     let stop_token_requires_tool = seq.tool_call_state.as_ref().is_some_and(|state| {
         state.is_stop_token_blocked(first_lobprobs_response.token, eos_tok, seq.stop_tokens())
     });
@@ -1616,7 +1651,7 @@ pub async fn sample_sequence(
     if let SequenceRecognizer::Llguidance(ref llg) = seq.recognizer {
         if llg.is_stopped() {
             if let Some(state) = seq.tool_call_state.as_mut() {
-                if state.clear_active_grammar() {
+                if !state.is_forced_single_call() && state.clear_active_grammar() {
                     seq.recognizer = SequenceRecognizer::None;
                     tracing::debug!("Deactivated tool call grammar (body complete)");
                 }
@@ -2451,5 +2486,697 @@ mod tests {
         let state = seq.tool_call_state.as_mut().unwrap();
         assert!(state.maybe_force_required_grammar(0, 8192, true).is_none());
         assert!(state.clear_active_grammar());
+    }
+
+    const REQUIRED_TEST_MODEL_EOS: u32 = 131;
+
+    fn obligation_test_factory() -> Arc<llguidance::ParserFactory> {
+        struct ByteEnv(toktrie::TokTrie);
+        impl toktrie::TokenizerEnv for ByteEnv {
+            fn tok_trie(&self) -> &toktrie::TokTrie {
+                &self.0
+            }
+            fn tokenize_bytes(&self, bytes: &[u8]) -> Vec<toktrie::TokenId> {
+                self.0.greedy_tokenize(bytes)
+            }
+            fn tokenize_is_canonical(&self) -> bool {
+                false
+            }
+        }
+        let mut tokens: Vec<_> = (0u8..=127).map(|b| vec![b]).collect();
+        let eos = u32::try_from(tokens.len()).unwrap();
+        for special in ["<eos>", "<tool_call>", "</tool_call>", "<model_eos>"] {
+            let mut bytes = vec![toktrie::TokTrie::SPECIAL_TOKEN_MARKER];
+            bytes.extend_from_slice(special.as_bytes());
+            tokens.push(bytes);
+        }
+        let trie = toktrie::TokTrie::from(
+            &toktrie::TokRxInfo::new(u32::try_from(tokens.len()).unwrap(), eos),
+            &tokens,
+        );
+        assert_eq!(
+            trie.get_special_token("<model_eos>"),
+            Some(REQUIRED_TEST_MODEL_EOS)
+        );
+        assert_ne!(trie.eos_token(), REQUIRED_TEST_MODEL_EOS);
+        let env: toktrie::TokEnv = Arc::new(ByteEnv(trie));
+        Arc::new(llguidance::ParserFactory::new_simple(&env).unwrap())
+    }
+
+    fn obligation_test_sequence(
+        factory: &Arc<llguidance::ParserFactory>,
+        choice: ToolChoice,
+        forced: bool,
+    ) -> Sequence {
+        let tools = strict_tool_test_catalog();
+        let mut seq = continuation_test_sequence(Some(&tools), choice);
+        let open = factory
+            .tok_env()
+            .tok_trie()
+            .get_special_token("<tool_call>")
+            .unwrap();
+        if forced {
+            activate_required_tool_call_grammar(&mut seq, Some(factory), 8192, true);
+            consume_obligation_token(&mut seq, factory, open);
+        } else {
+            commit_obligation_token(&mut seq, factory, obligation_logprobs(open));
+            activate_continuation_tool_call_grammar(&mut seq, Some(factory), Some("<tool_call>"))
+                .unwrap();
+        }
+        assert!(matches!(seq.recognizer, SequenceRecognizer::Llguidance(_)));
+        seq
+    }
+
+    fn obligation_logprobs(token: u32) -> Logprobs {
+        Logprobs {
+            token,
+            logprob: 0.0,
+            bytes: None,
+            top_logprobs: None,
+        }
+    }
+
+    fn commit_obligation_token(
+        seq: &mut Sequence,
+        factory: &llguidance::ParserFactory,
+        logprobs: Logprobs,
+    ) -> Option<StopReason> {
+        let trie = factory.tok_env().tok_trie();
+        let is_done = seq.is_done(logprobs.token, Some(&[REQUIRED_TEST_MODEL_EOS]), 8192);
+        let bytes = trie.decode_ext(&[logprobs.token], true);
+        let guard = seq.special_text_guard.get_or_insert_with(|| {
+            SpecialTextGuard::new(SpecialStrings::for_env(&factory.tok_env()))
+        });
+        let bytes = guard.push(
+            &bytes,
+            trie.is_special_token(logprobs.token),
+            is_done.is_some(),
+        );
+        let mut is_done = seq.add_token(logprobs, bytes, is_done);
+        if complete_active_tool_call_grammar(seq).unwrap() {
+            is_done = Some(StopReason::Eos);
+        }
+        if let Some(reason) = is_done {
+            seq.set_state(SequenceState::Done(reason));
+        }
+        is_done
+    }
+
+    fn consume_obligation_token(
+        seq: &mut Sequence,
+        factory: &llguidance::ParserFactory,
+        token: u32,
+    ) {
+        let SequenceRecognizer::Llguidance(matcher) = &mut seq.recognizer else {
+            panic!("tool matcher must be active")
+        };
+        assert!(matcher.compute_mask().unwrap().is_allowed(token));
+        matcher.consume_token(token).unwrap();
+        commit_obligation_token(seq, factory, obligation_logprobs(token));
+    }
+
+    fn consume_obligation_text(
+        seq: &mut Sequence,
+        factory: &llguidance::ParserFactory,
+        text: &str,
+    ) {
+        for token in factory
+            .tok_env()
+            .tok_trie()
+            .greedy_tokenize(text.as_bytes())
+        {
+            consume_obligation_token(seq, factory, token);
+        }
+    }
+
+    fn obligation_decision_body() -> String {
+        let tool = strict_tool_test_catalog()
+            .into_iter()
+            .find(|t| t.function.name.contains("__answer_decisions_"))
+            .unwrap();
+        serde_json::json!({"name":tool.function.name,"arguments":{"state":"test","questions":{"pick":{"type":"choice"}},"model":"laya"}}).to_string()
+    }
+
+    async fn sample_obligation_token(
+        seq: &mut Sequence,
+        factory: &Arc<llguidance::ParserFactory>,
+        preferred: u32,
+    ) -> Logprobs {
+        let trie = factory.tok_env().tok_trie();
+        let mut logits = vec![-100.0; trie.vocab_size()];
+        logits[trie.eos_token() as usize] = 1.0;
+        logits[trie.get_special_token("</tool_call>").unwrap() as usize] = 5.0;
+        logits[trie.get_special_token("<tool_call>").unwrap() as usize] = 10.0;
+        logits[preferred as usize] = 1000.0;
+        sample_sequence(
+            Tensor::from_vec(logits, (1, 1, trie.vocab_size()), &candle_core::Device::Cpu).unwrap(),
+            seq,
+            false,
+            Some(&[REQUIRED_TEST_MODEL_EOS]),
+            Some(factory.clone()),
+            8192,
+            Arc::new(std::sync::Mutex::new(Isaac64Rng::seed_from_u64(42))),
+            false,
+            false,
+            false,
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn required_obligation_accepting_boundary_allows_distinct_model_eos() {
+        let factory = obligation_test_factory();
+        let trie = factory.tok_env().tok_trie();
+        let mut seq = obligation_test_sequence(&factory, ToolChoice::Required, false);
+        consume_obligation_text(&mut seq, &factory, &obligation_decision_body());
+        assert!(seq
+            .tool_call_state
+            .as_ref()
+            .unwrap()
+            .required_tool_call_unsatisfied());
+        assert!(seq
+            .is_done(
+                REQUIRED_TEST_MODEL_EOS,
+                Some(&[REQUIRED_TEST_MODEL_EOS]),
+                8192
+            )
+            .is_none());
+        consume_obligation_token(
+            &mut seq,
+            &factory,
+            trie.get_special_token("</tool_call>").unwrap(),
+        );
+        assert!(!seq
+            .tool_call_state
+            .as_ref()
+            .unwrap()
+            .required_tool_call_unsatisfied());
+        assert!(matches!(seq.recognizer, SequenceRecognizer::Llguidance(_)));
+        let sampled = sample_obligation_token(&mut seq, &factory, REQUIRED_TEST_MODEL_EOS).await;
+        assert_eq!(sampled.token, REQUIRED_TEST_MODEL_EOS);
+        assert_eq!(
+            commit_obligation_token(&mut seq, &factory, sampled),
+            Some(StopReason::Eos)
+        );
+    }
+
+    #[tokio::test]
+    async fn required_obligation_forced_deadline_and_eos_finish_one_call_before_reactivation() {
+        let factory = obligation_test_factory();
+        let trie = factory.tok_env().tok_trie();
+        let tools = strict_tool_test_catalog();
+        assert_eq!(tools.len(), 15);
+        for deadline in [true, false] {
+            for streaming in [true, false] {
+                let mut seq = terminal_test_sequence(vec![], deadline.then_some(1024), false);
+                seq.get_mut_group().is_streaming = streaming;
+                seq.tool_call_state = Some(
+                    ToolCallState::new(
+                        ToolChoice::Required,
+                        Some(&tools),
+                        Some(crate::tools::ToolCallFormat::Qwen),
+                    )
+                    .unwrap(),
+                );
+                let open = trie.get_special_token("<tool_call>").unwrap();
+                let first = sample_obligation_token(
+                    &mut seq,
+                    &factory,
+                    if deadline {
+                        open
+                    } else {
+                        REQUIRED_TEST_MODEL_EOS
+                    },
+                )
+                .await;
+                assert_eq!(first.token, open);
+                assert!(seq
+                    .tool_call_state
+                    .as_ref()
+                    .unwrap()
+                    .is_forced_single_call());
+                assert!(commit_obligation_token(&mut seq, &factory, first).is_none());
+                for token in trie.greedy_tokenize(obligation_decision_body().as_bytes()) {
+                    let sampled = sample_obligation_token(&mut seq, &factory, token).await;
+                    assert_eq!(sampled.token, token);
+                    assert!(commit_obligation_token(&mut seq, &factory, sampled).is_none());
+                }
+                let close = trie.get_special_token("</tool_call>").unwrap();
+                let sampled = sample_obligation_token(&mut seq, &factory, close).await;
+                assert_eq!(sampled.token, close);
+                assert_eq!(
+                    commit_obligation_token(&mut seq, &factory, sampled),
+                    Some(StopReason::Eos)
+                );
+                assert!(matches!(
+                    seq.getstate(),
+                    SequenceState::Done(StopReason::Eos)
+                ));
+                assert!(matches!(seq.recognizer, SequenceRecognizer::None));
+                assert!(!seq
+                    .tool_call_state
+                    .as_ref()
+                    .unwrap()
+                    .required_tool_call_unsatisfied());
+                let raw = String::from_utf8(seq.completion_bytes().to_vec()).unwrap();
+                assert_eq!(
+                    raw,
+                    format!("<tool_call>{}</tool_call>", obligation_decision_body())
+                );
+                activate_continuation_tool_call_grammar(&mut seq, Some(&factory), Some(&raw))
+                    .unwrap();
+                assert!(matches!(seq.recognizer, SequenceRecognizer::None));
+                let state = seq.tool_call_state.as_mut().unwrap();
+                let parsed = if streaming {
+                    state
+                        .parse_streaming(Some(raw.clone()), &raw, None, false, true)
+                        .unwrap()
+                } else {
+                    state.finalize_for_response(&raw, None, None, None).unwrap()
+                };
+                assert_eq!(parsed.tool_calls.len(), 1);
+                assert_eq!(parsed.tool_calls[0].index, 0);
+                uuid::Uuid::parse_str(parsed.tool_calls[0].id.strip_prefix("call-").unwrap())
+                    .unwrap();
+                assert_eq!(
+                    serde_json::from_str::<serde_json::Value>(
+                        &parsed.tool_calls[0].function.arguments
+                    )
+                    .unwrap(),
+                    serde_json::from_str::<serde_json::Value>(&obligation_decision_body()).unwrap()
+                        ["arguments"]
+                );
+                assert!(state.maybe_force_required_grammar(0, 8192, true).is_none());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn required_obligation_auto_spontaneous_named_and_allowed_preserve_ordered_parallel_calls(
+    ) {
+        use crate::tools::{
+            AllowedToolChoice, AllowedToolsMode, AllowedToolsToolChoice,
+            AllowedToolsToolChoiceType, NamedFunctionToolChoice,
+        };
+        let factory = obligation_test_factory();
+        let trie = factory.tok_env().tok_trie();
+        let name = serde_json::from_str::<serde_json::Value>(&obligation_decision_body()).unwrap()
+            ["name"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let choices = [
+            (ToolChoice::Auto, false),
+            (ToolChoice::Required, false),
+            (
+                ToolChoice::NamedFunction(NamedFunctionToolChoice {
+                    tp: ToolType::Function,
+                    name: name.clone(),
+                }),
+                true,
+            ),
+            (
+                ToolChoice::AllowedTools(AllowedToolsToolChoice {
+                    tp: AllowedToolsToolChoiceType::AllowedTools,
+                    mode: AllowedToolsMode::Required,
+                    tools: vec![AllowedToolChoice::Function { name: name.clone() }],
+                }),
+                true,
+            ),
+        ];
+        for (choice, forced) in choices {
+            for streaming in [true, false] {
+                let mut seq = obligation_test_sequence(&factory, choice.clone(), forced);
+                seq.get_mut_group().is_streaming = streaming;
+                assert!(!seq
+                    .tool_call_state
+                    .as_ref()
+                    .unwrap()
+                    .is_forced_single_call());
+                for index in 0..3 {
+                    if index > 0 {
+                        consume_obligation_token(
+                            &mut seq,
+                            &factory,
+                            trie.get_special_token("<tool_call>").unwrap(),
+                        );
+                    }
+                    let mut body: serde_json::Value =
+                        serde_json::from_str(&obligation_decision_body()).unwrap();
+                    if index == 1 && !forced {
+                        let list = strict_tool_test_catalog()
+                            .into_iter()
+                            .find(|t| t.function.name.contains("__list_models_"))
+                            .unwrap();
+                        body = serde_json::json!({"name":list.function.name,"arguments":{}});
+                    } else {
+                        body["arguments"]["state"] = serde_json::json!(format!("call{index}"));
+                    }
+                    consume_obligation_text(&mut seq, &factory, &body.to_string());
+                    consume_obligation_token(
+                        &mut seq,
+                        &factory,
+                        trie.get_special_token("</tool_call>").unwrap(),
+                    );
+                    assert!(!matches!(seq.getstate(), SequenceState::Done(_)));
+                    assert!(matches!(seq.recognizer, SequenceRecognizer::Llguidance(_)));
+                    assert!(!seq
+                        .tool_call_state
+                        .as_ref()
+                        .unwrap()
+                        .required_tool_call_unsatisfied());
+                }
+                let sampled =
+                    sample_obligation_token(&mut seq, &factory, REQUIRED_TEST_MODEL_EOS).await;
+                assert_eq!(sampled.token, REQUIRED_TEST_MODEL_EOS);
+                commit_obligation_token(&mut seq, &factory, sampled);
+                let raw = String::from_utf8(seq.completion_bytes().to_vec()).unwrap();
+                let state = seq.tool_call_state.as_mut().unwrap();
+                let parsed = if streaming {
+                    state
+                        .parse_streaming(Some(raw.clone()), &raw, None, false, true)
+                        .unwrap()
+                } else {
+                    state.finalize_for_response(&raw, None, None, None).unwrap()
+                };
+                assert_eq!(parsed.tool_calls.len(), 3);
+                assert_ne!(parsed.tool_calls[0].id, parsed.tool_calls[2].id);
+                assert_ne!(parsed.tool_calls[0].id, parsed.tool_calls[1].id);
+                for (index, call) in parsed.tool_calls.iter().enumerate() {
+                    assert_eq!(call.index, index);
+                    if index == 1 && !forced {
+                        assert!(call.function.name.contains("__list_models_"));
+                        assert_eq!(call.function.arguments, "{}");
+                    } else {
+                        assert_eq!(call.function.name, name);
+                        assert_eq!(
+                            serde_json::from_str::<serde_json::Value>(&call.function.arguments)
+                                .unwrap()["state"],
+                            format!("call{index}")
+                        );
+                    }
+                    uuid::Uuid::parse_str(call.id.strip_prefix("call-").unwrap()).unwrap();
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn required_obligation_incomplete_boundary_blocks_model_eos_and_retains_grammar() {
+        let factory = obligation_test_factory();
+        for forced in [true, false] {
+            let mut seq = obligation_test_sequence(&factory, ToolChoice::Required, forced);
+            consume_obligation_text(&mut seq, &factory, &obligation_decision_body());
+            assert!(!complete_active_tool_call_grammar(&mut seq).unwrap());
+            assert!(seq
+                .tool_call_state
+                .as_ref()
+                .unwrap()
+                .required_tool_call_unsatisfied());
+            let sampled =
+                sample_obligation_token(&mut seq, &factory, REQUIRED_TEST_MODEL_EOS).await;
+            assert_eq!(
+                sampled.token,
+                factory
+                    .tok_env()
+                    .tok_trie()
+                    .get_special_token("</tool_call>")
+                    .unwrap()
+            );
+            assert!(seq
+                .tool_call_state
+                .as_ref()
+                .unwrap()
+                .required_tool_call_unsatisfied());
+            assert!(seq
+                .is_done(
+                    REQUIRED_TEST_MODEL_EOS,
+                    Some(&[REQUIRED_TEST_MODEL_EOS]),
+                    8192
+                )
+                .is_none());
+        }
+    }
+
+    #[test]
+    fn required_obligation_missing_factory_user_grammar_none_and_untriggered_do_not_claim_completion(
+    ) {
+        let factory = obligation_test_factory();
+        let tools = strict_tool_test_catalog();
+        for choice in [ToolChoice::Auto, ToolChoice::None, ToolChoice::Required] {
+            let mut seq = continuation_test_sequence(Some(&tools), choice.clone());
+            activate_required_tool_call_grammar(&mut seq, Some(&factory), 8192, false);
+            assert!(matches!(seq.recognizer, SequenceRecognizer::None));
+            assert!(!complete_active_tool_call_grammar(&mut seq).unwrap());
+            assert_eq!(
+                seq.tool_call_state
+                    .as_ref()
+                    .unwrap()
+                    .required_tool_call_unsatisfied(),
+                choice.requires_tool_call()
+            );
+        }
+        let mut no_tools = continuation_test_sequence(None, ToolChoice::Auto);
+        activate_required_tool_call_grammar(&mut no_tools, Some(&factory), 8192, true);
+        assert!(matches!(no_tools.recognizer, SequenceRecognizer::None));
+        let mut seq = continuation_test_sequence(Some(&tools), ToolChoice::Required);
+        activate_required_tool_call_grammar(&mut seq, None, 8192, true);
+        assert!(matches!(seq.recognizer, SequenceRecognizer::None));
+        let grammar = llguidance::api::TopLevelGrammar::from_lark("start: /[a-z]+/".to_string());
+        seq.recognizer = SequenceRecognizer::Llguidance(Box::new(
+            crate::pipeline::llg::constraint_from_llg_grammar(&factory, grammar).unwrap(),
+        ));
+        consume_obligation_text(&mut seq, &factory, "hello");
+        let SequenceRecognizer::Llguidance(matcher) = &mut seq.recognizer else {
+            unreachable!()
+        };
+        assert!(matcher.is_accepting().unwrap());
+        assert!(!complete_active_tool_call_grammar(&mut seq).unwrap());
+        assert!(seq
+            .tool_call_state
+            .as_ref()
+            .unwrap()
+            .required_tool_call_unsatisfied());
+        activate_required_tool_call_grammar(&mut seq, Some(&factory), 8192, true);
+        assert!(!seq
+            .tool_call_state
+            .as_ref()
+            .unwrap()
+            .is_forced_single_call());
+    }
+
+    #[test]
+    fn required_obligation_nonstrict_xml_eligibility_and_strict_xml_refusal() {
+        let factory = obligation_test_factory();
+        let mut tools = strict_tool_test_catalog();
+        tools.push(weather_tool());
+        let mut seq = continuation_test_sequence(Some(&tools), ToolChoice::Required);
+        activate_required_tool_call_grammar(&mut seq, Some(&factory), 8192, true);
+        consume_obligation_token(
+            &mut seq,
+            &factory,
+            factory
+                .tok_env()
+                .tok_trie()
+                .get_special_token("<tool_call>")
+                .unwrap(),
+        );
+        consume_obligation_text(
+            &mut seq,
+            &factory,
+            "<function=get_weather><parameter=city>Paris</parameter></function>",
+        );
+        consume_obligation_token(
+            &mut seq,
+            &factory,
+            factory
+                .tok_env()
+                .tok_trie()
+                .get_special_token("</tool_call>")
+                .unwrap(),
+        );
+        assert!(matches!(
+            seq.getstate(),
+            SequenceState::Done(StopReason::Eos)
+        ));
+        let raw = String::from_utf8(seq.completion_bytes().to_vec()).unwrap();
+        let parsed = seq
+            .tool_call_state
+            .as_mut()
+            .unwrap()
+            .finalize_for_response(&raw, None, None, None)
+            .unwrap();
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].function.name, "get_weather");
+        assert_eq!(
+            parsed.tool_calls[0].function.arguments,
+            r#"{"city":"Paris"}"#
+        );
+        let mut strict = obligation_test_sequence(&factory, ToolChoice::Required, true);
+        let SequenceRecognizer::Llguidance(matcher) = &mut strict.recognizer else {
+            unreachable!()
+        };
+        assert!(!matcher.compute_mask().unwrap().is_allowed(u32::from(b'<')));
+        assert!(strict
+            .tool_call_state
+            .as_ref()
+            .unwrap()
+            .required_tool_call_unsatisfied());
+    }
+
+    #[test]
+    fn required_obligation_cancel_and_length_limits_survive_partial_and_closed_calls() {
+        let factory = obligation_test_factory();
+        let mut seq = obligation_test_sequence(&factory, ToolChoice::Required, true);
+        consume_obligation_text(&mut seq, &factory, &obligation_decision_body());
+        seq.set_state(SequenceState::Done(StopReason::Canceled));
+        consume_obligation_token(
+            &mut seq,
+            &factory,
+            factory
+                .tok_env()
+                .tok_trie()
+                .get_special_token("</tool_call>")
+                .unwrap(),
+        );
+        assert!(matches!(
+            seq.getstate(),
+            SequenceState::Done(StopReason::Canceled)
+        ));
+        assert!(seq
+            .tool_call_state
+            .as_ref()
+            .unwrap()
+            .required_tool_call_unsatisfied());
+        assert!(seq
+            .tool_call_state
+            .as_ref()
+            .unwrap()
+            .is_forced_single_call());
+        let mut limited = terminal_test_sequence(vec![], Some(1), false);
+        let tools = strict_tool_test_catalog();
+        limited.tool_call_state = Some(
+            ToolCallState::new(
+                ToolChoice::Required,
+                Some(&tools),
+                Some(crate::tools::ToolCallFormat::Qwen),
+            )
+            .unwrap(),
+        );
+        activate_required_tool_call_grammar(&mut limited, Some(&factory), 8192, true);
+        assert_eq!(
+            commit_obligation_token(
+                &mut limited,
+                &factory,
+                obligation_logprobs(
+                    factory
+                        .tok_env()
+                        .tok_trie()
+                        .get_special_token("<tool_call>")
+                        .unwrap()
+                )
+            ),
+            Some(StopReason::Length(1))
+        );
+        assert!(limited
+            .tool_call_state
+            .as_ref()
+            .unwrap()
+            .required_tool_call_unsatisfied());
+        assert!(limited.is_done(1, None, 0).is_some());
+    }
+
+    #[tokio::test]
+    async fn required_obligation_satisfied_parallel_turn_still_rejects_eos_inside_next_call() {
+        let factory = obligation_test_factory();
+        let trie = factory.tok_env().tok_trie();
+        let mut seq = obligation_test_sequence(&factory, ToolChoice::Required, false);
+        consume_obligation_text(&mut seq, &factory, &obligation_decision_body());
+        consume_obligation_token(
+            &mut seq,
+            &factory,
+            trie.get_special_token("</tool_call>").unwrap(),
+        );
+        assert!(!seq
+            .tool_call_state
+            .as_ref()
+            .unwrap()
+            .required_tool_call_unsatisfied());
+        consume_obligation_token(
+            &mut seq,
+            &factory,
+            trie.get_special_token("<tool_call>").unwrap(),
+        );
+        let sampled = sample_obligation_token(&mut seq, &factory, REQUIRED_TEST_MODEL_EOS).await;
+        assert_ne!(sampled.token, REQUIRED_TEST_MODEL_EOS);
+        assert!(matches!(seq.recognizer, SequenceRecognizer::Llguidance(_)));
+        assert!(!matches!(seq.getstate(), SequenceState::Done(_)));
+    }
+
+    #[test]
+    fn required_obligation_spontaneous_mixed_xml_json_calls_keep_active_parallel_grammar() {
+        let factory = obligation_test_factory();
+        let trie = factory.tok_env().tok_trie();
+        let mut tools = strict_tool_test_catalog();
+        tools.push(weather_tool());
+        let mut seq = continuation_test_sequence(Some(&tools), ToolChoice::Required);
+        let open = trie.get_special_token("<tool_call>").unwrap();
+        let close = trie.get_special_token("</tool_call>").unwrap();
+        commit_obligation_token(&mut seq, &factory, obligation_logprobs(open));
+        activate_continuation_tool_call_grammar(&mut seq, Some(&factory), Some("<tool_call>"))
+            .unwrap();
+        consume_obligation_text(
+            &mut seq,
+            &factory,
+            "<function=get_weather><parameter=city>Paris</parameter></function>",
+        );
+        consume_obligation_token(&mut seq, &factory, close);
+        assert!(!seq
+            .tool_call_state
+            .as_ref()
+            .unwrap()
+            .required_tool_call_unsatisfied());
+        consume_obligation_token(&mut seq, &factory, open);
+        consume_obligation_text(&mut seq, &factory, &obligation_decision_body());
+        consume_obligation_token(&mut seq, &factory, close);
+        assert!(matches!(seq.recognizer, SequenceRecognizer::Llguidance(_)));
+        assert!(!matches!(seq.getstate(), SequenceState::Done(_)));
+        let raw = String::from_utf8(seq.completion_bytes().to_vec()).unwrap();
+        let calls = seq
+            .tool_call_state
+            .as_mut()
+            .unwrap()
+            .finalize_for_response(&raw, None, None, None)
+            .unwrap()
+            .tool_calls;
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].function.name, "get_weather");
+        assert!(calls[1].function.name.contains("__answer_decisions_"));
+        assert_ne!(calls[0].id, calls[1].id);
+    }
+
+    #[test]
+    fn required_obligation_literal_control_token_prose_is_defused_and_never_completes_a_call() {
+        let factory = obligation_test_factory();
+        let tools = strict_tool_test_catalog();
+        let mut seq = continuation_test_sequence(Some(&tools), ToolChoice::Required);
+        let prose = format!(
+            "a literal <tool_call>{}</tool_call> example",
+            obligation_decision_body()
+        );
+        for byte in prose.bytes() {
+            commit_obligation_token(&mut seq, &factory, obligation_logprobs(u32::from(byte)));
+        }
+        let text = String::from_utf8(seq.completion_bytes().to_vec()).unwrap();
+        assert!(!text.contains("<tool_call>"));
+        activate_continuation_tool_call_grammar(&mut seq, Some(&factory), Some(&text)).unwrap();
+        assert!(matches!(seq.recognizer, SequenceRecognizer::None));
+        assert!(!complete_active_tool_call_grammar(&mut seq).unwrap());
+        assert!(seq
+            .tool_call_state
+            .as_ref()
+            .unwrap()
+            .required_tool_call_unsatisfied());
     }
 }

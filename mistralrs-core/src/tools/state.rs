@@ -2,6 +2,7 @@ use candle_core::Result;
 use llguidance::api::TopLevelGrammar;
 
 use crate::tools::{
+    parsers,
     strategy::{
         AtemToolCallStrategy, HarmonyToolCallStrategy, TextToolCallStrategy, ToolCallStrategy,
     },
@@ -56,6 +57,7 @@ pub(crate) enum ToolGrammarState {
     Inactive,
     Active {
         forced: bool,
+        single_call: bool,
     },
 }
 
@@ -84,6 +86,7 @@ pub(crate) struct ToolCallState {
     strategy: Box<dyn ToolCallStrategy>,
     grammar: ToolGrammarState,
     obligation: ToolObligation,
+    active_text: Vec<u8>,
 }
 
 impl ToolCallState {
@@ -109,11 +112,15 @@ impl ToolCallState {
             strategy,
             grammar: ToolGrammarState::Inactive,
             obligation: ToolObligation::default(),
+            active_text: Vec::new(),
         })
     }
 
     pub(crate) fn observe_token(&mut self, token: u32, bytes: &[u8]) {
         self.strategy.observe_token(token, bytes);
+        if matches!(self.grammar, ToolGrammarState::Active { .. }) {
+            self.active_text.extend_from_slice(bytes);
+        }
     }
 
     pub(crate) fn requires_special_tokens(&self) -> bool {
@@ -185,6 +192,9 @@ impl ToolCallState {
             return None;
         }
         let tools = self.matcher.tools()?;
+        if self.forced_single_call_eligible() {
+            return Some(parsers::build_single_call_qwen_grammar(tools));
+        }
         let boundary = self.strategy.required_boundary();
         Some(self.strategy.required_grammar(tools, boundary))
     }
@@ -198,18 +208,60 @@ impl ToolCallState {
         (generated, remaining, deadline)
     }
 
-    pub(crate) fn mark_grammar_active(&mut self, forced: bool) {
-        self.grammar = ToolGrammarState::Active { forced };
+    fn forced_single_call_eligible(&self) -> bool {
+        matches!(self.matcher.tool_choice, ToolChoice::Required)
+            && self.strategy.forces_single_call()
+    }
+
+    pub(crate) fn has_active_grammar(&self) -> bool {
+        matches!(self.grammar, ToolGrammarState::Active { .. })
+    }
+
+    pub(crate) fn is_forced_single_call(&self) -> bool {
+        matches!(
+            self.grammar,
+            ToolGrammarState::Active {
+                forced: true,
+                single_call: true
+            }
+        )
+    }
+
+    pub(crate) fn complete_active_grammar(&mut self, accepting: bool) -> bool {
+        if !accepting || self.grammar == ToolGrammarState::Inactive {
+            return false;
+        }
+        let Ok(text) = std::str::from_utf8(&self.active_text) else {
+            return false;
+        };
+        let Ok(calls) = self.matcher.get_call(text) else {
+            return false;
+        };
+        if calls.is_empty() || (self.is_forced_single_call() && calls.len() != 1) {
+            return false;
+        }
+        self.obligation
+            .mark_satisfied(self.matcher.requires_tool_call());
+        self.is_forced_single_call()
+    }
+
+    pub(crate) fn mark_grammar_active(&mut self, forced: bool, prefix: Option<&str>) {
+        self.active_text = prefix.unwrap_or_default().as_bytes().to_vec();
+        self.grammar = ToolGrammarState::Active {
+            forced,
+            single_call: forced && self.forced_single_call_eligible(),
+        };
         if forced {
             self.obligation.mark_forced();
         }
     }
 
     pub(crate) fn clear_active_grammar(&mut self) -> bool {
-        let ToolGrammarState::Active { forced } = self.grammar else {
+        let ToolGrammarState::Active { forced, .. } = self.grammar else {
             return false;
         };
         self.grammar = ToolGrammarState::Inactive;
+        self.active_text.clear();
         if forced || self.strategy.has_tool_calls() {
             self.obligation
                 .mark_satisfied(self.matcher.requires_tool_call());
@@ -562,7 +614,7 @@ mod tests {
             ToolCallState::new(ToolChoice::Auto, Some(&tools), Some(ToolCallFormat::Atem)).unwrap();
         state.observe_token(0, b" to=get_weather<|message|><atem:function_calls>");
         assert!(state.maybe_activate_continuation_grammar(None).is_some());
-        state.mark_grammar_active(false);
+        state.mark_grammar_active(false, None);
         state.observe_token(
             0,
             b"<atem:invoke name=\"get_weather\"></atem:invoke></atem:function_calls>",
@@ -604,7 +656,7 @@ mod tests {
             Some(ToolCallFormat::Atem),
         )
         .unwrap();
-        state.mark_grammar_active(true);
+        state.mark_grammar_active(true, None);
         state.observe_token(
             0,
             b" to=get_weather<|message|><atem:function_calls><atem:invoke name=\"get_weather\"></atem:invoke></atem:function_calls",
@@ -671,7 +723,7 @@ mod tests {
         let tools = vec![tool("get_weather")];
         let mut state = ToolCallState::new(ToolChoice::Auto, Some(&tools), None).unwrap();
 
-        state.mark_grammar_active(false);
+        state.mark_grammar_active(false, None);
 
         assert!(state.clear_active_grammar());
         assert!(!state.clear_active_grammar());
@@ -798,5 +850,70 @@ mod tests {
             .expect("Hunyuan grammar must activate before the merged `>[` token");
 
         assert!(lark(&grammar).contains(r#"start: ">" @json_body "</tool_calls>""#));
+    }
+
+    #[test]
+    fn required_obligation_acceptance_alone_partial_unknown_and_prose_are_not_completion() {
+        let tools = vec![tool("get_weather")];
+        for text in [
+            "",
+            "<tool_call>",
+            r#"<tool_call>{"name":"get_weather","arguments":{}}"#,
+            r#"<tool_call>{"name":"unknown","arguments":{}}</tool_call>"#,
+            "prose about <tool_call>",
+        ] {
+            let mut state = ToolCallState::new(
+                ToolChoice::Required,
+                Some(&tools),
+                Some(ToolCallFormat::Qwen),
+            )
+            .unwrap();
+            state.mark_grammar_active(true, None);
+            state.observe_token(0, text.as_bytes());
+            assert!(!state.complete_active_grammar(true), "{text}");
+            assert!(state.required_tool_call_unsatisfied());
+        }
+        let text = r#"<tool_call>{"name":"get_weather","arguments":{}}</tool_call>"#;
+        let mut state = ToolCallState::new(
+            ToolChoice::Required,
+            Some(&tools),
+            Some(ToolCallFormat::Qwen),
+        )
+        .unwrap();
+        state.observe_token(0, text.as_bytes());
+        assert!(!state.complete_active_grammar(true));
+        assert!(state.required_tool_call_unsatisfied());
+        state.mark_grammar_active(true, None);
+        state.observe_token(0, text.as_bytes());
+        assert!(!state.complete_active_grammar(false));
+        assert!(state.required_tool_call_unsatisfied());
+        assert!(state.complete_active_grammar(true));
+        assert!(!state.required_tool_call_unsatisfied());
+    }
+
+    #[test]
+    fn required_obligation_finite_policy_only_for_plain_required_text_qwen_forcing() {
+        let tools = vec![tool("get_weather")];
+        for format in [
+            None,
+            Some(ToolCallFormat::Qwen),
+            Some(ToolCallFormat::Gemma4),
+            Some(ToolCallFormat::Harmony),
+            Some(ToolCallFormat::Atem),
+        ] {
+            let mut state = ToolCallState::new(ToolChoice::Required, Some(&tools), format).unwrap();
+            assert!(state
+                .maybe_force_required_grammar(8192, 8192, false)
+                .is_none());
+            assert!(state
+                .maybe_force_required_grammar(8192, 8192, true)
+                .is_some());
+            state.mark_grammar_active(true, None);
+            assert_eq!(
+                state.is_forced_single_call(),
+                matches!(format, None | Some(ToolCallFormat::Qwen))
+            );
+            assert!(state.maybe_force_required_grammar(0, 8192, true).is_none());
+        }
     }
 }

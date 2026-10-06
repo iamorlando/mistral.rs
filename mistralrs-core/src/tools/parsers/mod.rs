@@ -151,6 +151,10 @@ pub fn build_required_tool_call_grammar(
     qwen::QwenParser.required_tool_call_grammar(tools)
 }
 
+pub fn build_single_call_qwen_grammar(tools: &[Tool]) -> TopLevelGrammar {
+    qwen::QwenParser::single_call_required_grammar(tools)
+}
+
 pub fn specialize_required_tool_call_grammar(
     grammar: &mut TopLevelGrammar,
     tok_trie: &toktrie::TokTrie,

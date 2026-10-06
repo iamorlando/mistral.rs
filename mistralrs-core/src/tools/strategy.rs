@@ -23,6 +23,9 @@ pub(crate) trait ToolCallStrategy: Send + Sync {
         tools: &[Tool],
     ) -> Option<TopLevelGrammar>;
     fn required_grammar(&self, tools: &[Tool], boundary: ToolCallBoundary) -> TopLevelGrammar;
+    fn forces_single_call(&self) -> bool {
+        false
+    }
     fn required_boundary(&self) -> ToolCallBoundary {
         ToolCallBoundary::ContinueCurrentMessage
     }
@@ -72,6 +75,10 @@ impl ToolCallStrategy for TextToolCallStrategy {
         tools: &[Tool],
     ) -> Option<TopLevelGrammar> {
         parsers::build_tool_call_grammar(text?, tools)
+    }
+
+    fn forces_single_call(&self) -> bool {
+        matches!(self.preferred_format, None | Some(ToolCallFormat::Qwen))
     }
 
     fn required_grammar(&self, tools: &[Tool], _boundary: ToolCallBoundary) -> TopLevelGrammar {
