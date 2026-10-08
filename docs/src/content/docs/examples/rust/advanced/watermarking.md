@@ -6,7 +6,9 @@ sidebar:
 ---
 
 Pass a configuration from `examples/watermarking/` to select a scheme. See
-[Text watermarking](/guides/customize/watermarking/) for all configurations and
+[Text watermarking](/guides/customize/watermarking/) for all configurations.
+The `textgrain.json` fixture selects entropy-calibrated transport; native sampling
+and trace options are described in the same guide. See
 [GPU integration boundaries](/guides/customize/watermarking-gpu/) for device coverage.
 
 ```rust

@@ -893,7 +893,8 @@ impl Sequence {
         sampling_seed: Option<u64>,
     ) -> Self {
         let prompt_len = tokens.len();
-        let sampling_seed = sampling_seed.or_else(|| sampler.uses_tournament().then(rand::random));
+        let sampling_seed =
+            sampling_seed.or_else(|| sampler.uses_explicit_sampling().then(rand::random));
         let _ = block_size; // Block management handled by KVCacheManager
         let stream_logprobs = return_logprobs
             && group

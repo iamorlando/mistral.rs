@@ -188,7 +188,7 @@ mod tests {
     fn config(scheme: &str) -> Value {
         let mut config = json!({"scheme": scheme, "key": "42".repeat(32)});
         match scheme {
-            "synthid" => {}
+            "synthid" | "textgrain" => {}
             "semstamp" => {
                 config["embedding_dim"] = json!(3);
                 config["num_hyperplanes"] = json!(2);
@@ -248,6 +248,7 @@ mod tests {
             "exponential",
             "inverse_transform",
             "mpac",
+            "textgrain",
         ] {
             let config = config(scheme);
             let watermark = Watermark::new(&serde_json::from_value(config.clone())?)?;

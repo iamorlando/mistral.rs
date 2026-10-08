@@ -4,7 +4,11 @@ mod tournament;
 pub use tournament::*;
 mod generation;
 pub use generation::*;
+mod textgrain;
 pub(crate) use generation::{GENERATION_RNG_VERSION, MIN_GENERATION_STEP_BYTES};
+#[cfg(test)]
+pub(crate) use textgrain::status as textgrain_status;
+pub use textgrain::*;
 
 const DEFAULT_STEPS: usize = 32;
 const DEFAULT_CANDIDATES: usize = 32;
@@ -28,6 +32,8 @@ pub struct SamplingTraceConfig {
     pub teaching_tournament: Option<TeachingTournamentConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub generation_tournament: Option<GenerationTournamentConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub textgrain: Option<TextGrainTraceConfig>,
 }
 
 impl Default for SamplingTraceConfig {
@@ -38,6 +44,7 @@ impl Default for SamplingTraceConfig {
             max_layers: DEFAULT_LAYERS,
             teaching_tournament: None,
             generation_tournament: None,
+            textgrain: None,
         }
     }
 }
@@ -46,6 +53,9 @@ impl SamplingTraceConfig {
     pub fn validate(&self, logprobs: bool, n_choices: usize) -> anyhow::Result<()> {
         anyhow::ensure!(logprobs, "sampling_trace requires logprobs");
         anyhow::ensure!(n_choices == 1, "sampling_trace requires n=1");
+        if let Some(native) = self.textgrain {
+            native.options().validate()?;
+        }
         anyhow::ensure!(
             (1..=MAX_STEPS).contains(&self.max_steps)
                 && (1..=MAX_CANDIDATES).contains(&self.max_candidates)
@@ -76,6 +86,41 @@ impl SamplingTraceConfig {
     ) -> anyhow::Result<()> {
         if let Some(tournament) = self.teaching_tournament {
             tournament.validate_watermark(watermark)?;
+        }
+        if self.textgrain.is_some() {
+            anyhow::ensure!(
+                matches!(watermark, Some(crate::WatermarkConfig::Textgrain { .. })),
+                "sampling_trace.textgrain requires a textGrain watermark"
+            );
+        }
+        if let Some(
+            config @ crate::WatermarkConfig::Textgrain {
+                block_count,
+                column_count,
+                max_iterations,
+                ..
+            },
+        ) = watermark
+        {
+            config.validate()?;
+            let native = self.textgrain.unwrap_or_default();
+            let records = native.records(
+                self.max_candidates,
+                *block_count,
+                *column_count,
+                *max_iterations,
+            )?;
+            let tournament_records = self
+                .generation_tournament
+                .map(|t| t.records(self.max_layers))
+                .transpose()?
+                .unwrap_or(0);
+            anyhow::ensure!(
+                self.max_steps.saturating_mul(
+                    records + self.max_candidates * self.max_layers.max(1) + tournament_records
+                ) <= MAX_OBSERVATIONS,
+                "sampling_trace exceeds 65536 observations including textGrain artifacts"
+            );
         }
         Ok(())
     }
@@ -109,6 +154,8 @@ pub struct SamplingTraceStep {
     pub teaching_tournament: Option<TeachingTournament>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub generation_tournament: Option<GenerationTournament>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub textgrain: Option<TextGrainTrace>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -218,6 +265,14 @@ impl TraceState {
     }
 
     pub(crate) fn record(&mut self, mut step: SamplingTraceStep) -> candle_core::Result<()> {
+        if step
+            .textgrain
+            .as_ref()
+            .and_then(|t| t.generation.as_ref())
+            .is_some_and(|draw| draw.selected_token_id != step.selected_token_id)
+        {
+            candle_core::bail!("textGrain generation draw differs from committed token");
+        }
         if let Some(winner) = step
             .generation_tournament
             .as_ref()
@@ -244,6 +299,7 @@ impl TraceState {
             step.layers_truncated |= !step.layers.is_empty();
             step.layers.clear();
             step.teaching_tournament = None;
+            step.textgrain = None;
             let mut size = JsonSize::default();
             serde_json::to_writer(&mut size, &step).map_err(candle_core::Error::wrap)?;
             bytes = self.bytes + size.0 + FRAME_ALLOWANCE;
@@ -307,6 +363,7 @@ pub(crate) mod tests {
             layers_truncated: false,
             teaching_tournament: None,
             generation_tournament: None,
+            textgrain: None,
         }
     }
 

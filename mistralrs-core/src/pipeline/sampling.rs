@@ -1621,7 +1621,7 @@ mod tests {
     };
 
     #[tokio::test]
-    async fn sampling_trace_teaching_tournament_records_only_the_accepted_grammar_attempt(
+    async fn sampling_trace_watermark_schemes_record_only_the_accepted_grammar_attempt(
     ) -> anyhow::Result<()> {
         struct ByteEnv(toktrie::TokTrie);
         impl toktrie::TokenizerEnv for ByteEnv {
@@ -1642,26 +1642,36 @@ mod tests {
             &tokens,
         )));
         let factory = Arc::new(llguidance::ParserFactory::new_simple(&env)?);
-        for (pooled, teaching, production) in [
-            (false, false, false),
-            (true, false, false),
-            (false, true, false),
-            (true, true, false),
-            (false, false, true),
-            (true, false, true),
+        for (pooled, teaching, production, textgrain) in [
+            (false, false, false, false),
+            (true, false, false, false),
+            (false, true, false, false),
+            (true, true, false, false),
+            (false, false, true, false),
+            (true, false, true, false),
+            (false, false, false, true),
+            (true, false, false, true),
         ] {
             let mut seq = terminal_test_sequence(vec![], None, false);
             let options = crate::sampling_trace::TeachingTournamentConfig::default();
-            if teaching || production {
-                let config = crate::WatermarkConfig::Synthid {
-                    generation_policy: if production {
-                        crate::SynthIdGenerationPolicy::Tournament
-                    } else {
-                        Default::default()
-                    },
-                    key: "42".repeat(32),
-                    ngram_len: 2,
-                    depth: 4,
+            if teaching || production || textgrain {
+                let config = if textgrain {
+                    serde_json::from_value(serde_json::json!({
+                        "scheme": "textgrain", "key": "42".repeat(32), "context_width": 2,
+                        "block_count": 4, "column_count": 5, "max_iterations": 16,
+                        "generation_policy": "block_then_token"
+                    }))?
+                } else {
+                    crate::WatermarkConfig::Synthid {
+                        generation_policy: if production {
+                            crate::SynthIdGenerationPolicy::Tournament
+                        } else {
+                            Default::default()
+                        },
+                        key: "42".repeat(32),
+                        ngram_len: 2,
+                        depth: 4,
+                    }
                 };
                 let sampler = Sampler::new(
                     Some(1.0),
@@ -1702,7 +1712,11 @@ mod tests {
                 },
             ));
             let mut logits = vec![-10.0f32; tokens.len()];
-            logits[b'b' as usize] = if teaching || production { 1000.0 } else { 10.0 };
+            logits[b'b' as usize] = if teaching || production || textgrain {
+                1000.0
+            } else {
+                10.0
+            };
             logits[b'a' as usize] = 1.0;
             let reference_logits = Tensor::from_vec(
                 logits.clone(),
@@ -1723,7 +1737,7 @@ mod tests {
             )
             .await?;
             assert_eq!(selected.token, u32::from(b'a'));
-            if production {
+            if production || textgrain {
                 use rand::RngCore;
                 let fallback = Arc::new(std::sync::Mutex::new(Isaac64Rng::seed_from_u64(99)));
                 let expected = sample_sequence(
@@ -1767,6 +1781,18 @@ mod tests {
                     .iter()
                     .all(|d| d.token_id == selected.token && d.probability == 1.0));
                 assert_eq!(bracket.total_matches, 15);
+            }
+            if textgrain {
+                let native = trace.steps[0].textgrain.as_ref().unwrap();
+                assert_eq!(native.status, "applied");
+                let draws = native.generation.as_ref().unwrap();
+                assert_eq!(draws.selected_token_id, selected.token);
+                assert_eq!(draws.effective_seed.as_deref(), Some("42"));
+                assert_eq!(draws.token_draw.cdf_upper - draws.token_draw.cdf_lower, 1.0);
+                assert_eq!(
+                    draws.selected_block,
+                    Some(native.blocks.as_ref().unwrap()[0])
+                );
             }
             if teaching {
                 let demo = trace.steps[0].teaching_tournament.as_ref().unwrap();

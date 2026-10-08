@@ -4,8 +4,8 @@ description: Select library watermark schemes through Rust, Python, and HTTP, wi
 ---
 
 mistral.rs delegates watermark algorithms to the standalone Rust `llm-watermarking`
-library. Six token schemes are available through Rust, Python, and HTTP generation:
-SynthID-Text, KGW, Unigram, exponential-race, inverse-transform, and MPAC. SemStamp
+library. Seven token schemes are available through Rust, Python, and HTTP generation:
+SynthID-Text, KGW, Unigram, exponential-race, inverse-transform, MPAC, and textGrain. SemStamp
 is available through embedding helpers; it cannot be attached to token generation.
 
 Watermarking is opt-in. Omit `watermark` or set it to `null` for ordinary sampling.
@@ -16,7 +16,8 @@ do not configure watermarks. Image and audio generation are outside this feature
 For local development, place `llm_watermarking` beside this repository. The workspace
 uses `llm-watermarking = { path = "../llm_watermarking", version = "0.1.0" }`.
 Both projects use the same pinned Candle Git revision. Mistral enables the library's
-`candle` feature and forwards its `cuda` and `metal` build features.
+`candle` feature and forwards its `cuda` and `metal` build features. textGrain
+requires the library API added in revision `af89e9e` or later.
 
 ## Configuration
 
@@ -34,6 +35,7 @@ logs contain the key, so store and transmit them accordingly.
 
 | `scheme` | Parameters beyond `key` | Detection evidence |
 | --- | --- | --- |
+| `textgrain` | `context_width=4`, `block_count=16`, `column_count=32`, `entropy_loss=0.1`, `max_iterations=128`, `entropy_tolerance=0.0001`, `generation_policy="probability_updates"` | `tokens_scored`, `score_sum`, `mean_score`, `p_value`, `log_p_value` |
 | `synthid` | `ngram_len=5`, `depth=30`, `generation_policy="probability_updates"` | `tokens_scored`, `mean_g_value` |
 | `kgw` | Required `vocab_size`; `context_width=1`, `green_fraction=0.5`, `delta=2`, `ignore_repeated_ngrams=true` | Green counts, expected/observed rate, nominal z-score |
 | `unigram` | Required `vocab_size`; `green_fraction=0.5`, `delta=2`, `ignore_repeated_tokens=true` | Green counts, expected/observed rate, nominal z-score |
@@ -54,8 +56,8 @@ SynthID. The existing Rust/Python `SynthIdTextWatermarkConfig` remains supported
 
 ## Examples for every scheme
 
-`examples/watermarking/` contains a JSON file for each of the seven schemes. The
-six generation configurations use the [Qwen3-4B output vocabulary of 151936](https://huggingface.co/Qwen/Qwen3-4B/raw/main/config.json).
+`examples/watermarking/` contains a JSON file for each of the eight schemes. The
+seven generation configurations use the [Qwen3-4B output vocabulary of 151936](https://huggingface.co/Qwen/Qwen3-4B/raw/main/config.json).
 The SemStamp file uses three-dimensional synthetic embeddings for a small demo.
 All runners replace the fixture key with `MISTRALRS_WATERMARK_KEY`.
 
@@ -66,7 +68,7 @@ python examples/server/watermarking.py kgw --endpoint chat/completions
 ```
 
 Replace `kgw` with `synthid`, `unigram`, `exponential`, `inverse_transform`, or
-`mpac` to run each token scheme. For NVIDIA builds use `--features cuda`; omit the
+`mpac`, or `textgrain` to run each token scheme. For NVIDIA builds use `--features cuda`; omit the
 feature for CPU builds. Python uses the backend compiled into its extension.
 The examples set `top_k=40`, enabling the supported GPU top-k insertion point.
 The HTTP runner also supports `completions`, `responses`, and `messages`.
@@ -218,7 +220,7 @@ not generate sentence embeddings or run sentence retries.
 
 Successful responses contain the same `kind` and evidence fields as the Rust
 and Python detectors: mean g-values, count statistics, keyed sampling costs,
-MPAC payload votes, or SemStamp sentence statistics. They contain no calibrated
+MPAC payload votes, textGrain Gamma-tail evidence, or SemStamp sentence statistics. They contain no calibrated
 watermark verdict or probability of authorship. Empty or insufficient evidence
 has zero scored items and null statistics where appropriate. Invalid keys,
 parameters, prompt lengths, token IDs, embedding shapes, or scheme/input
@@ -326,6 +328,84 @@ python examples/server/watermarking.py kgw --endpoint completions --trace --dete
 Both comparison runs use the same seed and settings. Once their generated
 prefixes differ, subsequent distributions have different contexts. The pre/post
 values within a marked step compare the watermark effect on the same prefix.
+
+### Native textGrain transport traces
+
+textGrain uses entropy-calibrated block transport. The default
+`generation_policy: "probability_updates"` transforms the filtered distribution
+and retains ordinary categorical selection, including the compact GPU path and
+speculative probability evaluation. `generation_policy: "block_then_token"`
+uses the library's native sampler: draw a block from the selected transport
+column, then draw a token from the original probabilities within that block.
+This policy requires ordinary token decoding and uses the host RNG. It is
+selected independently of tracing.
+
+To export native artifacts for a consumer UI:
+
+```json
+{
+  "model": "default",
+  "messages": [{"role": "user", "content": "Write a story about a lunar garden."}],
+  "temperature": 0.8,
+  "top_k": 40,
+  "max_tokens": 64,
+  "seed": 42,
+  "logprobs": true,
+  "watermark": {
+    "scheme": "textgrain",
+    "key": "<your 64 hex characters>",
+    "generation_policy": "block_then_token"
+  },
+  "sampling_trace": {
+    "max_steps": 4,
+    "max_candidates": 16,
+    "max_layers": 0,
+    "textgrain": {"max_iterations": 16, "transport": true}
+  }
+}
+```
+
+Read each `steps[i].textgrain` object. Its native fields map to these UI views:
+
+| View | Artifact |
+| --- | --- |
+| Token partition | `token_ids` and aligned `blocks`; these IDs match the step's candidate order, with the selected token first. |
+| Input and output distribution | `input_probabilities`, `output_probabilities`, `output_log_probabilities`; normalization retains the full vocabulary support. Zero probability has a null log probability. |
+| Block allocation | `block_masses`, `conditional_block_probabilities`, `selected_column`. |
+| Transport heatmap | `transport.costs` and `transport.coupling`, flat row-major arrays of shape `[block_count, column_count]`. Costs are standardized negative Gumbel values. Coupling rows sum to block masses and columns sum to `1 / column_count`. |
+| Entropy calibration | `solver` includes token/block entropy, requested/target/achieved entropy fractions, entropy loss in nats, regularization, residuals, convergence status, and `budget_satisfied`. |
+| Solver progress | `iterations` captures bounded diagnostics; `omitted_iterations` counts uncaptured iterations. |
+| Detector signal | Candidate-aligned `selected_costs` and `detection_scores`. |
+| Actual selection | `generation.selected_block`, `selected_token_id`, `block_draw`, and `token_draw`; each draw records its uniform and normalized CDF interval. |
+
+With probability updates, `generation` is null because the host categorical
+sampler selects the token. With native block-then-token sampling, it has
+`origin: "production"`, `used_for_generation: true`, and the committed token
+ID. The step's selection rule is `textgrain_block_then_token`. Active sampling
+consumes two RNG words; warmup or repeated-context steps consume one ordinary
+categorical draw. RNG provenance includes the version and effective sequence
+seed encoded as a decimal string, preserving all 64 bits. The f64 draw intervals
+are authoritative; displayed output probabilities are rounded from f32 weights.
+
+Warmup and repeated-context traces have their actual status and no solver,
+transport, or block assignment. Greedy steps report `watermark.status: "greedy"`
+and have no textGrain solve or draw trace. textGrain has no SynthID layers or
+brackets.
+
+Native traces are included whenever textGrain sampling is traced. By default,
+iteration history and the full transport table are omitted. The trace's
+`textgrain.max_iterations` controls capture only; it does not change the
+watermark's solver `max_iterations`, generated token, or RNG consumption.
+`max_layers` controls other schemes' layers. The request's existing 65536
+observation limit also charges native candidate fields, block metadata,
+iterations, and transport cells before snapshot materialization; the aggregate
+8 MiB serialized trace limit still applies. Reduce capture limits for large
+block/column tables. `budget_satisfied` can be false at the iteration limit;
+consumer UIs should display the solver's reported outcome.
+
+```bash
+python examples/server/watermarking.py textgrain --generation-policy block_then_token --trace-steps 4 --trace-candidates 16 --textgrain-transport --textgrain-iterations 16
+```
 
 ### Actual generation tournaments
 
@@ -540,7 +620,7 @@ filters, watermarking, and token selection. Excluded tokens remain excluded.
 Reported logprobs refer to the unwatermarked, pre-filter model probabilities.
 Greedy sampling has no watermark choice.
 
-CPU generation supports all six token schemes, including speculative probabilities.
+CPU generation supports all seven token schemes. Probability-update modes also support speculative probabilities.
 The position-keyed samplers produce a point mass for a fixed key, position, and
 model distribution; speculative acceptance uses that distribution rather than
 treating selection scores as probabilities. Context and position are derived from
@@ -567,6 +647,16 @@ metadata costs and remaining host boundaries. This feature does not replace
 mistral's GPU backend.
 
 ## Detection and format
+
+textGrain detection returns `kind: "textgrain"`. It scores distinct generated
+contexts, excluding prompt tokens, warmup, repeats, and generated EOS onward.
+`score_sum` has an idealized Gamma(`tokens_scored`, 1) null; `p_value` is its
+upper tail and `log_p_value` preserves tiny tails. An empty result has zero scored
+tokens and null mean/p-values. These p-values assume the library's PRF and
+independence conditions and are not probabilities of AI authorship. Retain the
+key, tokenizer, context width, block/column counts, and implementation domain.
+The implementation uses the standalone library's SHA-256 PRF and defaults;
+it does not reproduce private production keys or parameters.
 
 Prefer original token IDs. Detokenizing and re-encoding can change IDs, and
 completion-only detection loses initial context for context-dependent schemes.

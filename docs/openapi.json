@@ -8873,6 +8873,17 @@
               }
             ],
             "default": null
+          },
+          "textgrain": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TextGrainTraceConfig"
+              }
+            ],
+            "default": null
           }
         },
         "additionalProperties": false
@@ -8951,6 +8962,16 @@
               },
               {
                 "$ref": "#/components/schemas/TeachingTournament"
+              }
+            ]
+          },
+          "textgrain": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TextGrainTrace"
               }
             ]
           },
@@ -9535,6 +9556,390 @@
         ],
         "description": "Text format configuration"
       },
+      "TextGrainDraw": {
+        "type": "object",
+        "required": [
+          "uniform",
+          "cdf_lower",
+          "cdf_upper"
+        ],
+        "properties": {
+          "cdf_lower": {
+            "type": "number",
+            "format": "double"
+          },
+          "cdf_upper": {
+            "type": "number",
+            "format": "double"
+          },
+          "uniform": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "TextGrainGeneration": {
+        "type": "object",
+        "required": [
+          "origin",
+          "used_for_generation",
+          "selected_token_id",
+          "token_draw",
+          "rng_draws",
+          "sampling_version",
+          "rng_version",
+          "rng_provenance"
+        ],
+        "properties": {
+          "block_draw": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TextGrainDraw"
+              }
+            ]
+          },
+          "effective_seed": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "origin": {
+            "type": "string"
+          },
+          "rng_draws": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "rng_provenance": {
+            "type": "string"
+          },
+          "rng_version": {
+            "type": "string"
+          },
+          "sampling_version": {
+            "type": "string"
+          },
+          "selected_block": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "selected_token_id": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "token_draw": {
+            "$ref": "#/components/schemas/TextGrainDraw"
+          },
+          "used_for_generation": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TextGrainGenerationPolicy": {
+        "type": "string",
+        "enum": [
+          "probability_updates",
+          "block_then_token"
+        ]
+      },
+      "TextGrainIteration": {
+        "type": "object",
+        "required": [
+          "iteration",
+          "regularization",
+          "achieved_fraction",
+          "row_residual",
+          "column_residual"
+        ],
+        "properties": {
+          "achieved_fraction": {
+            "type": "number",
+            "format": "double"
+          },
+          "column_residual": {
+            "type": "number",
+            "format": "double"
+          },
+          "iteration": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "regularization": {
+            "type": "number",
+            "format": "double"
+          },
+          "row_residual": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "TextGrainSolver": {
+        "type": "object",
+        "required": [
+          "status",
+          "iterations",
+          "token_entropy",
+          "block_entropy",
+          "requested_fraction",
+          "target_fraction",
+          "achieved_fraction",
+          "entropy_loss",
+          "row_residual",
+          "column_residual",
+          "budget_satisfied"
+        ],
+        "properties": {
+          "achieved_fraction": {
+            "type": "number",
+            "format": "double"
+          },
+          "block_entropy": {
+            "type": "number",
+            "format": "double"
+          },
+          "budget_satisfied": {
+            "type": "boolean"
+          },
+          "column_residual": {
+            "type": "number",
+            "format": "double"
+          },
+          "entropy_loss": {
+            "type": "number",
+            "format": "double"
+          },
+          "iterations": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "regularization": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "requested_fraction": {
+            "type": "number",
+            "format": "double"
+          },
+          "row_residual": {
+            "type": "number",
+            "format": "double"
+          },
+          "status": {
+            "type": "string"
+          },
+          "target_fraction": {
+            "type": "number",
+            "format": "double"
+          },
+          "token_entropy": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "TextGrainTrace": {
+        "type": "object",
+        "required": [
+          "status",
+          "token_ids",
+          "input_probabilities",
+          "output_probabilities",
+          "output_log_probabilities",
+          "block_masses",
+          "conditional_block_probabilities",
+          "iterations",
+          "omitted_iterations"
+        ],
+        "properties": {
+          "block_masses": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          "blocks": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "conditional_block_probabilities": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          "detection_scores": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          "generation": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TextGrainGeneration"
+              }
+            ]
+          },
+          "input_probabilities": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          "iterations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TextGrainIteration"
+            }
+          },
+          "omitted_iterations": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "output_log_probabilities": {
+            "type": "array",
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          },
+          "output_probabilities": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          "selected_column": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "selected_costs": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          "solver": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TextGrainSolver"
+              }
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "token_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          "transport": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TextGrainTransport"
+              }
+            ]
+          }
+        }
+      },
+      "TextGrainTraceConfig": {
+        "type": "object",
+        "properties": {
+          "max_iterations": {
+            "type": "integer",
+            "default": 0,
+            "maximum": 10000,
+            "minimum": 0
+          },
+          "transport": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "TextGrainTransport": {
+        "type": "object",
+        "required": [
+          "block_count",
+          "column_count",
+          "costs",
+          "coupling"
+        ],
+        "properties": {
+          "block_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "column_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "costs": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          "coupling": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        }
+      },
       "Tool": {
         "type": "object",
         "description": "Tool definition",
@@ -10037,6 +10442,51 @@
               "scheme"
             ],
             "properties": {
+              "block_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "column_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "context_width": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "entropy_loss": {
+                "type": "number",
+                "format": "double"
+              },
+              "entropy_tolerance": {
+                "type": "number",
+                "format": "double"
+              },
+              "generation_policy": {
+                "$ref": "#/components/schemas/TextGrainGenerationPolicy"
+              },
+              "key": {
+                "type": "string"
+              },
+              "max_iterations": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "scheme": {
+                "type": "string",
+                "enum": [
+                  "textgrain"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "key",
+              "scheme"
+            ],
+            "properties": {
               "depth": {
                 "type": "integer",
                 "minimum": 0
@@ -10398,6 +10848,51 @@
       },
       "WatermarkEvidence": {
         "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "tokens_scored",
+              "score_sum",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "textgrain"
+                ]
+              },
+              "log_p_value": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              },
+              "mean_score": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              },
+              "p_value": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              },
+              "score_sum": {
+                "type": "number",
+                "format": "double"
+              },
+              "tokens_scored": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
           {
             "type": "object",
             "required": [

@@ -769,6 +769,18 @@ impl Sampler {
         Ok(self)
     }
 
+    pub(crate) fn uses_explicit_sampling(&self) -> bool {
+        self.watermark
+            .as_ref()
+            .is_some_and(RequestWatermark::uses_explicit_sampling)
+    }
+
+    pub(crate) fn uses_textgrain_sampling(&self) -> bool {
+        self.watermark
+            .as_ref()
+            .is_some_and(RequestWatermark::uses_textgrain_sampling)
+    }
+
     pub(crate) fn uses_tournament(&self) -> bool {
         self.watermark
             .as_ref()
@@ -1892,9 +1904,9 @@ impl Sampler {
         context: &[u32],
         prompt_len: usize,
     ) -> Result<SpeculativeProbs> {
-        if self.uses_tournament() && self.temperature.is_some() {
+        if self.uses_explicit_sampling() && self.temperature.is_some() {
             candle_core::bail!(
-                "explicit tournament sampling does not support speculative probability evaluation"
+                "explicit watermark sampling does not support speculative probability evaluation"
             );
         }
         let SpeculativeProbs {
@@ -2199,10 +2211,10 @@ impl Sampler {
         sample_speculative: bool,
         multiple_sequences: bool,
     ) -> Result<Logprobs> {
-        if self.uses_tournament() {
+        if self.uses_explicit_sampling() {
             if sample_speculative {
                 candle_core::bail!(
-                    "explicit tournament sampling does not support speculative decoding"
+                    "explicit watermark sampling does not support speculative decoding"
                 );
             }
             if self.temperature.is_some() {
@@ -2215,10 +2227,18 @@ impl Sampler {
                     .resolve(probs.sampling.len())?;
                 let token = {
                     let mut rng = rng.lock().expect("could not lock rng mutex");
-                    watermark
-                        .production_sampler()?
-                        .sample(&probs.sampling, context, prompt_len, &mut || rng.next_u64())
-                        .map_err(candle_core::Error::wrap)?
+                    if self.uses_textgrain_sampling() {
+                        watermark
+                            .textgrain()
+                            .map_err(candle_core::Error::wrap)?
+                            .sample(&probs.sampling, context, prompt_len, &mut || rng.next_u64())
+                            .map_err(candle_core::Error::wrap)?
+                    } else {
+                        watermark
+                            .production_sampler()?
+                            .sample(&probs.sampling, context, prompt_len, &mut || rng.next_u64())
+                            .map_err(candle_core::Error::wrap)?
+                    }
                 };
                 return self.logprobs_from_probs(token, &probs.reporting, return_logprobs);
             }

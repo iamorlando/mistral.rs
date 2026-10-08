@@ -6,6 +6,7 @@ not production keys. All runners replace the key with `MISTRALRS_WATERMARK_KEY`.
 
 | Scheme | Configuration | Execution |
 | --- | --- | --- |
+| textGrain | `textgrain.json` | Entropy-calibrated transport, native traces, Gamma-tail evidence |
 | SynthID | `synthid.json` | Text generation and token detection |
 | KGW | `kgw.json` | Text generation and token detection |
 | Unigram | `unigram.json` | Text generation and token detection |
@@ -30,3 +31,13 @@ add `--features metal` or `--features cuda`; SemStamp also reads
 
 The device integration boundaries and proposed library extensions are documented
 in `docs/src/content/docs/guides/customize/watermarking-gpu.md`.
+
+Capture native textGrain transport, solver iterations, and actual block/token draws:
+
+```bash
+python examples/server/watermarking.py textgrain --generation-policy block_then_token --trace-steps 4 --trace-candidates 16 --textgrain-transport --textgrain-iterations 16
+```
+
+Without `block_then_token`, traces still expose native transport diagnostics, while
+selection uses the existing categorical sampler. Table and iteration capture are
+bounded separately from the solver's `max_iterations`.

@@ -270,6 +270,7 @@ mod tests {
         }
         let at_limit = SamplingTraceConfig {
             generation_tournament: None,
+            textgrain: None,
             max_steps: 256,
             max_candidates: 128,
             max_layers: 2,

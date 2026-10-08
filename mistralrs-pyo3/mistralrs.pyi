@@ -142,7 +142,7 @@ class WatermarkConfig:
     """Select a watermark scheme; key is 64 hexadecimal characters and has no default."""
 
     def __init__(self, key: str, *, scheme: str = "synthid", **parameters: Any) -> None:
-        """Schemes: synthid, kgw, unigram, exponential, inverse_transform, mpac, semstamp.
+        """Schemes: synthid, kgw, unigram, exponential, inverse_transform, mpac, textgrain, semstamp.
 
         Parameters match the [watermark configuration](/guides/customize/watermarking/).
         SemStamp requires sentence embeddings and cannot be used for token generation.

@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-SCHEMES = ("synthid", "kgw", "unigram", "exponential", "inverse_transform", "mpac")
+SCHEMES = ("synthid", "kgw", "unigram", "exponential", "inverse_transform", "mpac", "textgrain")
 
 
 def post(base_url, endpoint, body):
@@ -59,9 +59,11 @@ def main():
         help="Capture the actual generation bracket, when the selected policy executes one",
     )
     parser.add_argument("--trace-matches", type=int, default=4095)
+    parser.add_argument("--textgrain-transport", action="store_true", help="Include native textGrain costs and coupling")
+    parser.add_argument("--textgrain-iterations", type=int, help="Bound captured textGrain solver iterations")
     parser.add_argument(
-        "--generation-policy", choices=("probability_updates", "tournament"),
-        help="Select SynthID sampling independently of tracing",
+        "--generation-policy", choices=("probability_updates", "tournament", "block_then_token"),
+        help="Select SynthID or textGrain sampling independently of tracing",
     )
     parser.add_argument(
         "--depth", type=int,
@@ -83,10 +85,16 @@ def main():
     args = parser.parse_args()
     if args.generation_tournament:
         args.trace = True
-    if (
-        args.generation_policy is not None or args.depth is not None
-    ) and args.scheme != "synthid":
-        parser.error("generation policy and depth require synthid")
+    if args.depth is not None and args.scheme != "synthid":
+        parser.error("depth requires synthid")
+    if args.generation_policy is not None:
+        allowed = {"synthid": ("probability_updates", "tournament"), "textgrain": ("probability_updates", "block_then_token")}
+        if args.generation_policy not in allowed.get(args.scheme, ()):
+            parser.error("generation policy is incompatible with the selected scheme")
+    if args.textgrain_transport or args.textgrain_iterations is not None:
+        args.trace = True
+        if args.scheme != "textgrain":
+            parser.error("native textGrain traces require textgrain")
     if args.teaching_tournament is not None:
         args.trace = True
         if args.scheme != "synthid":
@@ -136,6 +144,11 @@ def main():
             body["sampling_trace"]["generation_tournament"] = {
                 "max_matches": args.trace_matches
             }
+        if args.textgrain_transport or args.textgrain_iterations is not None:
+            body["sampling_trace"]["textgrain"] = {
+                "max_iterations": args.textgrain_iterations or 0,
+                "transport": args.textgrain_transport,
+            }
         body["logprobs"] = 10 if args.endpoint == "completions" else True
         if args.endpoint == "chat/completions":
             body["top_logprobs"] = 10
@@ -143,7 +156,7 @@ def main():
         baseline = {name: value for name, value in body.items() if name != "watermark"}
         baseline["sampling_trace"] = {
             name: value for name, value in body["sampling_trace"].items()
-            if name != "teaching_tournament"
+            if name not in ("teaching_tournament", "textgrain")
         }
         print(json.dumps({"without_watermark": post(args.base_url, args.endpoint, baseline)}, indent=2))
     response = post(args.base_url, args.endpoint, body)

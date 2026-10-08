@@ -9,8 +9,8 @@ use rand_isaac::Isaac64Rng;
 use super::{argmax_f32, partial_sort_top_k, Logprobs, Sampler};
 use crate::sampling_trace::{
     GenerationTournament, SamplingTraceConfig, SamplingTraceStep, TeachingTournament,
-    TraceCandidate, TraceInverse, TraceLayer, TraceMembership, TraceWatermark,
-    GENERATION_RNG_VERSION,
+    TextGrainGeneration, TextGrainTrace, TraceCandidate, TraceInverse, TraceLayer, TraceMembership,
+    TraceWatermark, GENERATION_RNG_VERSION,
 };
 
 pub(crate) struct TraceStepContext<'a> {
@@ -57,8 +57,30 @@ impl Sampler {
         }
         let before = sampling.clone();
         let explicit = self.uses_tournament() && self.temperature.is_some();
+        let explicit_textgrain = self.uses_textgrain_sampling() && self.temperature.is_some();
+        let native_options = step.options.textgrain.unwrap_or_default();
+        let mut native_trace = None;
         let library_trace = if let Some(watermark) = &self.watermark {
-            if self.temperature.is_some() && !explicit {
+            if self.temperature.is_some()
+                && watermark.scheme() == "textgrain"
+                && !explicit_textgrain
+            {
+                native_trace = Some(
+                    watermark
+                        .resolve(sampling.len())?
+                        .textgrain()
+                        .map_err(candle_core::Error::wrap)?
+                        .apply_traced(
+                            &mut sampling,
+                            step.context,
+                            step.prompt_len,
+                            &native_options.options(),
+                        )
+                        .map_err(candle_core::Error::wrap)?,
+                );
+                Self::normalize_probs(&mut sampling)?;
+                None
+            } else if self.temperature.is_some() && !explicit && !explicit_textgrain {
                 let trace = watermark.resolve(sampling.len())?.apply_traced(
                     &mut sampling,
                     step.context,
@@ -76,7 +98,32 @@ impl Sampler {
             None
         };
         let mut generation_tournament = None;
-        let selected = if explicit {
+        let mut native_generation = None;
+        let selected = if explicit_textgrain {
+            let watermark = self.watermark.as_ref().unwrap().resolve(before.len())?;
+            let mut guard = rng.lock().expect("could not lock rng mutex");
+            let trace = watermark
+                .textgrain()
+                .map_err(candle_core::Error::wrap)?
+                .sample_traced(
+                    &before,
+                    step.context,
+                    step.prompt_len,
+                    &mut || guard.next_u64(),
+                    &native_options.options(),
+                )
+                .map_err(candle_core::Error::wrap)?;
+            drop(guard);
+            let token = trace.token_id;
+            sampling.copy_from_slice(trace.trace.output());
+            Self::normalize_probs(&mut sampling)?;
+            native_generation = Some(TextGrainGeneration::from_library(
+                &trace,
+                step.sampling_seed,
+            ));
+            native_trace = Some(trace.trace);
+            self.logprobs_from_probs(token, &reporting, true)?
+        } else if explicit {
             let watermark = self.watermark.as_ref().unwrap().resolve(before.len())?;
             let sampler = watermark.production_sampler()?;
             let mut guard = rng.lock().expect("could not lock rng mutex");
@@ -181,6 +228,18 @@ impl Sampler {
                     .map_err(candle_core::Error::wrap)
             })
             .transpose()?;
+        let textgrain = native_trace
+            .as_ref()
+            .map(|trace| {
+                trace
+                    .snapshot(
+                        Some(&ids),
+                        &native_options.view(step.options.max_candidates),
+                    )
+                    .map(|snapshot| TextGrainTrace::from_library(snapshot, native_generation))
+                    .map_err(candle_core::Error::wrap)
+            })
+            .transpose()?;
         let before_total: f64 = before.iter().map(|&p| f64::from(p)).sum();
         let after_total: f64 = sampling.iter().map(|&p| f64::from(p)).sum();
         let scheme = self.watermark.as_ref().map(|w| w.scheme());
@@ -241,6 +300,7 @@ impl Sampler {
                     TraceStatus::Warmup => "warmup",
                     TraceStatus::RepeatedContext => "repeated_context",
                 })
+                .or_else(|| textgrain.as_ref().map(|t| t.status.as_str()))
                 .unwrap_or_else(|| {
                     if explicit {
                         generation_tournament
@@ -330,6 +390,8 @@ impl Sampler {
                 "greedy"
             } else if explicit {
                 "synthid_tournament"
+            } else if explicit_textgrain {
+                "textgrain_block_then_token"
             } else if keyed {
                 "keyed_argmax"
             } else {
@@ -344,6 +406,7 @@ impl Sampler {
             layers_truncated,
             teaching_tournament,
             generation_tournament,
+            textgrain,
         };
         Ok((selected, trace))
     }
@@ -993,6 +1056,196 @@ mod tests {
             assert!(value["candidates"][0]
                 .get("post_watermark_probability")
                 .is_none());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn textgrain_watermark_native_traces_preserve_sampling_and_expose_transport(
+    ) -> anyhow::Result<()> {
+        use crate::sampling_trace::TextGrainTraceConfig;
+        let logits = Tensor::from_vec(
+            (0..VOCAB).map(|i| (i as f32 * 0.7).sin()).collect(),
+            VOCAB,
+            &Device::Cpu,
+        )?;
+        for policy in ["probability_updates", "block_then_token"] {
+            let config: crate::WatermarkConfig = serde_json::from_value(serde_json::json!({
+                "scheme": "textgrain", "key": "42".repeat(32), "context_width": 2,
+                "block_count": 4, "column_count": 5, "max_iterations": 16,
+                "generation_policy": policy
+            }))?;
+            let detector = crate::Watermark::new(&config)?;
+            let probability_check = sampler(Some(0.7))
+                .with_watermark(Some(&config))?
+                .speculative_probs(logits.clone(), &[1, 2, 3, 4], 0);
+            assert_eq!(probability_check.is_ok(), policy == "probability_updates");
+            for temperature in [None, Some(0.7)] {
+                let sampler = sampler(temperature).with_watermark(Some(&config))?;
+                for context in [vec![1], vec![1, 2, 3, 4], vec![1, 1, 1, 1]] {
+                    for capture in [
+                        None,
+                        Some(TextGrainTraceConfig {
+                            max_iterations: 1,
+                            transport: false,
+                        }),
+                        Some(TextGrainTraceConfig {
+                            max_iterations: 16,
+                            transport: true,
+                        }),
+                    ] {
+                        let seed = u64::MAX - 7;
+                        let plain_rng = Arc::new(Mutex::new(Isaac64Rng::seed_from_u64(seed)));
+                        let traced_rng = Arc::new(Mutex::new(Isaac64Rng::seed_from_u64(seed)));
+                        let expected = sampler.sample(
+                            logits.clone(),
+                            &context,
+                            0,
+                            true,
+                            plain_rng.clone(),
+                            false,
+                            false,
+                        )?;
+                        let (actual, trace) = sampler.sample_traced(
+                            logits.clone(),
+                            TraceStepContext {
+                                context: &context,
+                                prompt_len: 0,
+                                sampling_seed: Some(seed),
+                                options: SamplingTraceConfig {
+                                    max_steps: 1,
+                                    max_candidates: 3,
+                                    textgrain: capture,
+                                    ..Default::default()
+                                },
+                            },
+                            traced_rng.clone(),
+                        )?;
+                        assert_eq!(
+                            serde_json::to_value(expected)?,
+                            serde_json::to_value(&actual)?
+                        );
+                        assert_eq!(
+                            plain_rng.lock().unwrap().next_u64(),
+                            traced_rng.lock().unwrap().next_u64()
+                        );
+                        assert!(trace.layers.is_empty());
+                        assert!(trace.generation_tournament.is_none());
+                        assert!(!serde_json::to_string(&trace)?.contains(&"42".repeat(32)));
+                        if temperature.is_none() {
+                            assert!(trace.textgrain.is_none());
+                            assert_eq!(trace.watermark.unwrap().status, "greedy");
+                            continue;
+                        }
+                        if policy == "block_then_token" {
+                            let mut state =
+                                crate::sampling_trace::TraceState::new(Default::default());
+                            state.record(trace.clone())?;
+                            let emitted = state.take(false).unwrap();
+                            assert_eq!(
+                                emitted.steps[0]
+                                    .textgrain
+                                    .as_ref()
+                                    .unwrap()
+                                    .generation
+                                    .as_ref()
+                                    .unwrap()
+                                    .selected_token_id,
+                                actual.token
+                            );
+                            let mut invalid = trace.clone();
+                            invalid.selected_token_id = (actual.token + 1) % VOCAB as u32;
+                            assert!(state.record(invalid).is_err());
+                        }
+                        let native = trace.textgrain.unwrap();
+                        let options = capture.unwrap_or_default();
+                        let mut weights = sampler
+                            .pre_watermark_probs(logits.clone(), &context, 0)?
+                            .sampling;
+                        let reference = detector.textgrain()?.apply_traced(
+                            &mut weights,
+                            &context,
+                            0,
+                            &options.options(),
+                        )?;
+                        let reference =
+                            reference.snapshot(Some(&native.token_ids), &options.view(3))?;
+                        assert_eq!(native.token_ids[0], actual.token);
+                        assert_eq!(
+                            native.token_ids,
+                            trace
+                                .candidates
+                                .iter()
+                                .map(|c| c.token_id)
+                                .collect::<Vec<_>>()
+                        );
+                        assert_eq!(
+                            native.status,
+                            crate::sampling_trace::textgrain_status(reference.status)
+                        );
+                        assert_eq!(native.blocks, reference.blocks);
+                        assert_eq!(native.output_probabilities, reference.output_probabilities);
+                        assert_eq!(native.selected_costs, reference.selected_costs);
+                        assert_eq!(native.detection_scores, reference.detection_scores);
+                        assert_eq!(
+                            native.solver.as_ref().map(|s| s.budget_satisfied),
+                            reference.solver.as_ref().map(|s| s.budget_satisfied)
+                        );
+                        assert_eq!(native.iterations.len(), reference.iterations.len());
+                        assert_eq!(native.omitted_iterations, reference.omitted_iterations);
+                        assert!(native.iterations.len() <= options.max_iterations);
+                        if native.status != "applied" {
+                            assert!(native.blocks.is_none());
+                            assert!(native.solver.is_none());
+                            assert!(native.transport.is_none());
+                        }
+                        if let Some(transport) = native.transport {
+                            let reference = reference.transport.unwrap();
+                            assert_eq!(transport.costs, reference.costs);
+                            assert_eq!(transport.coupling, reference.coupling);
+                            assert_eq!(transport.coupling.len(), 20);
+                            for (block, row) in transport.coupling.chunks(5).enumerate() {
+                                assert!(
+                                    (row.iter().sum::<f64>() - native.block_masses[block]).abs()
+                                        < 1e-10
+                                );
+                            }
+                            for column in 0..5 {
+                                assert!(
+                                    (transport.coupling.chunks(5).map(|r| r[column]).sum::<f64>()
+                                        - 0.2)
+                                        .abs()
+                                        < 1e-10
+                                );
+                            }
+                        }
+                        if policy == "block_then_token" {
+                            let draws = native.generation.unwrap();
+                            assert!(draws.used_for_generation);
+                            assert_eq!(draws.selected_token_id, actual.token);
+                            assert_eq!(draws.effective_seed, Some(seed.to_string()));
+                            assert_eq!(
+                                draws.rng_draws,
+                                if native.status == "applied" { 2 } else { 1 }
+                            );
+                            for draw in draws
+                                .block_draw
+                                .iter()
+                                .chain(std::iter::once(&draws.token_draw))
+                            {
+                                assert!(
+                                    draw.uniform >= draw.cdf_lower && draw.uniform < draw.cdf_upper
+                                );
+                            }
+                            if let Some(block) = draws.selected_block {
+                                assert_eq!(block, native.blocks.unwrap()[0]);
+                            }
+                        } else {
+                            assert!(native.generation.is_none());
+                        }
+                    }
+                }
+            }
         }
         Ok(())
     }

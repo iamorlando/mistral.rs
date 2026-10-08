@@ -11,7 +11,7 @@ from pathlib import Path
 from mistralrs import Architecture, ChatCompletionRequest, Runner, WatermarkConfig, Which
 
 SCHEMES = (
-    "synthid", "kgw", "unigram", "exponential", "inverse_transform", "mpac", "semstamp"
+    "synthid", "kgw", "unigram", "exponential", "inverse_transform", "mpac", "textgrain", "semstamp"
 )
 
 

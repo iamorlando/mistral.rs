@@ -347,6 +347,25 @@ mod tests {
                 .to_string()
                 .contains("SamplingTrace"));
         }
+        assert!(schemas["SamplingTraceConfig"]["properties"]["textgrain"]
+            .to_string()
+            .contains("TextGrainTraceConfig"));
+        assert!(schemas["SamplingTraceStep"]["properties"]["textgrain"]
+            .to_string()
+            .contains("TextGrainTrace"));
+        for name in [
+            "TextGrainSolver",
+            "TextGrainIteration",
+            "TextGrainTransport",
+            "TextGrainGeneration",
+            "TextGrainDraw",
+        ] {
+            assert!(schemas.get(name).is_some(), "{name}");
+        }
+        assert!(schemas["WatermarkConfig"].to_string().contains("textgrain"));
+        assert!(schemas["WatermarkEvidence"]
+            .to_string()
+            .contains("log_p_value"));
         assert!(schemas["SamplingTraceStep"]["properties"]
             .get("selected_token_id")
             .is_some());

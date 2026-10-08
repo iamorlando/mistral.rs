@@ -5,7 +5,8 @@ mod schemes;
 pub(crate) use schemes::tests::token_configs;
 pub(crate) use schemes::RequestWatermark;
 pub use schemes::{
-    SynthIdGenerationPolicy, Watermark, WatermarkConfig, WatermarkEvidence, WatermarkTensor,
+    SynthIdGenerationPolicy, TextGrainGenerationPolicy, Watermark, WatermarkConfig,
+    WatermarkEvidence, WatermarkTensor,
 };
 
 use llm_watermarking::synthid::{

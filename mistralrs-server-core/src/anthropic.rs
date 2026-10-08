@@ -2106,6 +2106,7 @@ mod tests {
     fn watermark_schemes_round_trip_all_generation_endpoints() {
         let fixtures = [
             include_str!("../../examples/watermarking/synthid.json"),
+            include_str!("../../examples/watermarking/textgrain.json"),
             include_str!("../../examples/watermarking/kgw.json"),
             include_str!("../../examples/watermarking/unigram.json"),
             include_str!("../../examples/watermarking/exponential.json"),

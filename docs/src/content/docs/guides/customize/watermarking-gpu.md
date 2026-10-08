@@ -31,7 +31,7 @@ uses no library strict-validation scalar readback.
 
 ## Compact probabilities and vocabulary metadata
 
-All six token schemes consume compact `[K]` weights and return values in the same
+All seven token schemes consume compact `[K]` weights and return values in the same
 candidate order. The adapter no longer scatters weights into a zero-filled
 vocabulary row or gathers dense results. Top-k supplies unique, in-range token
 IDs; filtering supplies finite nonnegative weights with positive mass. These
@@ -39,7 +39,7 @@ invariants permit the trusted constructors and application without a validation
 readback. Zero weights keep excluded candidates ineligible.
 
 Hashes and partitions still use actual vocabulary IDs and the full vocabulary
-definition. SynthID and exponential race hash only K candidates. KGW and MPAC
+definition. SynthID, exponential race, and textGrain hash only K candidates. textGrain computes its block transport on the input device. KGW and MPAC
 still reconstruct the full-vocabulary partition for each changed context;
 Unigram and inverse transform cache full-vocabulary metadata per device. The
 library owns these algorithms. Removing dense probability work does not remove
@@ -66,6 +66,17 @@ would require another transfer. A future GPU trace export must include bounded
 metadata in the existing packed readback. Device-history traces cannot identify
 whether an inactive step was warmup or a repeated context; that reason must stay
 unspecified rather than be inferred.
+
+## Native textGrain sampling
+
+textGrain's default probability-update policy uses the same compact device
+insertion point. Its separate `block_then_token` policy calls the library's
+scalar native sampler with the live sequence RNG and bypasses compact selection.
+This policy requires ordinary token decoding; speculative and block decoding are
+rejected. Native trace capture uses the same host path, including costs, coupling,
+entropy diagnostics, and the actual block/token draw intervals. Capture does not
+change the solver or RNG consumption. See the
+[native trace contract](/guides/customize/watermarking/#native-textgrain-transport-traces).
 
 ## Host boundary: fused CUDA samplers
 

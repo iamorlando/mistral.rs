@@ -213,8 +213,8 @@ impl Engine {
         }
         if let Some(config) = &request.sampling_params.watermark {
             let validation = config.validate_generation().and_then(|()| {
-                anyhow::ensure!(!config.uses_tournament() || get_mut_arcmutex!(self.pipeline).supports_sampling_trace(),
-                    "explicit tournament sampling requires ordinary token sampling; speculative and block decoding are unsupported");
+                anyhow::ensure!(!config.uses_explicit_sampling() || get_mut_arcmutex!(self.pipeline).supports_sampling_trace(),
+                    "explicit watermark sampling requires ordinary token sampling; speculative and block decoding are unsupported");
                 Ok(())
             });
             if let Err(error) = validation {

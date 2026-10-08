@@ -14,12 +14,12 @@ pub(crate) fn validate_watermark_model(
 ) -> anyhow::Result<()> {
     if let Some(watermark) = watermark {
         watermark.validate_generation()?;
-        if watermark.uses_tournament() {
+        if watermark.uses_explicit_sampling() {
             let config = state
                 .config((model != "default").then_some(model))
                 .map_err(anyhow::Error::msg)?;
             anyhow::ensure!(config.supports_sampling_trace,
-                "explicit tournament sampling requires ordinary token sampling; speculative and block decoding are unsupported");
+                "explicit watermark sampling requires ordinary token sampling; speculative and block decoding are unsupported");
         }
     }
     Ok(())

@@ -2135,6 +2135,47 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn textgrain_watermark_requests_separate_capture_from_generation_policy() {
+        for policy in ["probability_updates", "block_then_token"] {
+            let body = json!({
+                "messages":"hello", "logprobs":true,
+                "watermark":{"scheme":"textgrain", "key":"42".repeat(32), "generation_policy":policy},
+                "sampling_trace":{"max_steps":4, "max_candidates":16, "textgrain":{"max_iterations":16, "transport":true}}
+            });
+            let chat: ChatCompletionRequest = serde_json::from_value(body.clone()).unwrap();
+            let completion: CompletionRequest = serde_json::from_value(json!({
+                "prompt":"hello", "logprobs":5, "watermark":body["watermark"], "sampling_trace":body["sampling_trace"]
+            })).unwrap();
+            for (config, watermark) in [
+                (chat.sampling_trace, chat.watermark),
+                (completion.sampling_trace, completion.watermark),
+            ] {
+                let watermark = watermark.unwrap();
+                watermark.validate_generation().unwrap();
+                assert_eq!(
+                    watermark.uses_explicit_sampling(),
+                    policy == "block_then_token"
+                );
+                assert!(!watermark.uses_tournament());
+                let config = config.unwrap();
+                config.validate(true, 1).unwrap();
+                config.validate_watermark(Some(&watermark)).unwrap();
+                assert!(config.textgrain.unwrap().transport);
+            }
+        }
+        for capture in [
+            json!({"max_iterations":-1}),
+            json!({"transport":"yes"}),
+            json!({"extra":true}),
+        ] {
+            assert!(serde_json::from_value::<ChatCompletionRequest>(json!({
+                "messages":"hello", "sampling_trace":{"textgrain":capture}
+            }))
+            .is_err());
+        }
+    }
+
+    #[test]
     fn generation_tournament_api_separates_capture_from_generation_policy() {
         let body = json!({
             "model":"default", "prompt":"Write a story", "seed":42, "logprobs":5,

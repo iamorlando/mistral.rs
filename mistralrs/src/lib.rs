@@ -297,10 +297,12 @@ pub use mistralrs_core::{
 };
 
 // ========== Sampling ==========
+pub use mistralrs_core::sampling_trace;
 pub use mistralrs_core::{DrySamplingParams, ModelGenerationDefaults, SamplingParams, StopTokens};
 pub use mistralrs_core::{
-    SynthIdGenerationPolicy, SynthIdTextWatermark, SynthIdTextWatermarkConfig, Watermark,
-    WatermarkConfig, WatermarkDetection, WatermarkEvidence, WatermarkTensor,
+    SynthIdGenerationPolicy, SynthIdTextWatermark, SynthIdTextWatermarkConfig,
+    TextGrainGenerationPolicy, Watermark, WatermarkConfig, WatermarkDetection, WatermarkEvidence,
+    WatermarkTensor,
 };
 
 // ========== Tool Types ==========

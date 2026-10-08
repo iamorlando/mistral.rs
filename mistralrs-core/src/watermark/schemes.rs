@@ -7,7 +7,7 @@ use candle_core::{Result, Tensor};
 #[cfg(any(feature = "cuda", feature = "metal", test))]
 use llm_watermarking::tensor::IndexedCandidates;
 use llm_watermarking::{
-    exponential, inverse_transform, kgw, mpac, sampling, semstamp, synthid, unigram,
+    exponential, inverse_transform, kgw, mpac, sampling, semstamp, synthid, textgrain, unigram,
 };
 use serde::{Deserialize, Serialize};
 
@@ -55,6 +55,25 @@ fn enabled() -> bool {
     true
 }
 
+fn textgrain_context_width() -> usize {
+    textgrain::TextGrainConfig::new([0; 32]).context_width
+}
+fn textgrain_blocks() -> usize {
+    textgrain::TextGrainConfig::new([0; 32]).block_count
+}
+fn textgrain_columns() -> usize {
+    textgrain::TextGrainConfig::new([0; 32]).column_count
+}
+fn textgrain_entropy_loss() -> f64 {
+    textgrain::TextGrainConfig::new([0; 32]).entropy_loss
+}
+fn textgrain_iterations() -> usize {
+    textgrain::TextGrainConfig::new([0; 32]).max_iterations
+}
+fn textgrain_tolerance() -> f64 {
+    textgrain::TextGrainConfig::new([0; 32]).entropy_tolerance
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
@@ -64,11 +83,37 @@ pub enum SynthIdGenerationPolicy {
     Tournament,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
+pub enum TextGrainGenerationPolicy {
+    #[default]
+    ProbabilityUpdates,
+    BlockThenToken,
+}
+
 /// Selects a library watermark; vocabulary sizes refer to model output rows, including padding.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "scheme", rename_all = "snake_case", deny_unknown_fields)]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub enum WatermarkConfig {
+    Textgrain {
+        key: String,
+        #[serde(default = "textgrain_context_width")]
+        context_width: usize,
+        #[serde(default = "textgrain_blocks")]
+        block_count: usize,
+        #[serde(default = "textgrain_columns")]
+        column_count: usize,
+        #[serde(default = "textgrain_entropy_loss")]
+        entropy_loss: f64,
+        #[serde(default = "textgrain_iterations")]
+        max_iterations: usize,
+        #[serde(default = "textgrain_tolerance")]
+        entropy_tolerance: f64,
+        #[serde(default)]
+        generation_policy: TextGrainGenerationPolicy,
+    },
     Synthid {
         key: String,
         #[serde(default = "super::default_ngram_len")]
@@ -166,6 +211,20 @@ impl From<SynthIdTextWatermarkConfig> for WatermarkConfig {
 }
 
 impl WatermarkConfig {
+    pub fn uses_textgrain_sampling(&self) -> bool {
+        matches!(
+            self,
+            Self::Textgrain {
+                generation_policy: TextGrainGenerationPolicy::BlockThenToken,
+                ..
+            }
+        )
+    }
+
+    pub fn uses_explicit_sampling(&self) -> bool {
+        self.uses_tournament() || self.uses_textgrain_sampling()
+    }
+
     pub fn uses_tournament(&self) -> bool {
         matches!(
             self,
@@ -178,6 +237,7 @@ impl WatermarkConfig {
 
     pub fn scheme(&self) -> &'static str {
         match self {
+            Self::Textgrain { .. } => "textgrain",
             Self::Synthid { .. } => "synthid",
             Self::Kgw { .. } => "kgw",
             Self::Unigram { .. } => "unigram",
@@ -231,6 +291,28 @@ impl WatermarkConfig {
 
     fn algorithm_config(&self) -> anyhow::Result<AlgorithmConfig> {
         let result = match self {
+            Self::Textgrain {
+                key,
+                context_width,
+                block_count,
+                column_count,
+                entropy_loss,
+                max_iterations,
+                entropy_tolerance,
+                ..
+            } => {
+                let config = textgrain::TextGrainConfig {
+                    key: decode_key(key)?,
+                    context_width: *context_width,
+                    block_count: *block_count,
+                    column_count: *column_count,
+                    entropy_loss: *entropy_loss,
+                    max_iterations: *max_iterations,
+                    entropy_tolerance: *entropy_tolerance,
+                };
+                config.validate()?;
+                AlgorithmConfig::Textgrain(config)
+            }
             Self::Synthid {
                 key,
                 ngram_len,
@@ -369,6 +451,7 @@ fn decode_key(key: &str) -> anyhow::Result<[u8; synthid::KEY_BYTES]> {
 }
 
 enum AlgorithmConfig {
+    Textgrain(textgrain::TextGrainConfig),
     Synthid(synthid::SynthIdConfig),
     Kgw(kgw::KgwConfig),
     Unigram(unigram::UnigramConfig),
@@ -380,6 +463,7 @@ enum AlgorithmConfig {
 
 #[derive(Clone)]
 enum Algorithm {
+    Textgrain(textgrain::TextGrain),
     Synthid(synthid::SynthIdText),
     Kgw(kgw::Kgw),
     Unigram(unigram::Unigram),
@@ -402,6 +486,13 @@ pub enum WatermarkTensor {
 }
 
 impl Watermark {
+    pub fn textgrain(&self) -> anyhow::Result<&textgrain::TextGrain> {
+        match &self.algorithm {
+            Algorithm::Textgrain(w) => Ok(w),
+            _ => anyhow::bail!("textgrain operations require a textGrain watermark"),
+        }
+    }
+
     pub(crate) fn production_sampler(
         &self,
     ) -> Result<synthid::generation_tournament::ProductionTournamentSampler<'_>> {
@@ -438,6 +529,7 @@ impl Watermark {
             .checked_sub(prompt_len)
             .ok_or_else(|| candle_core::Error::Msg("prompt_len exceeds token count".into()))?;
         let result = match &self.algorithm {
+            Algorithm::Textgrain(_) => candle_core::bail!("textgrain requires native tracing"),
             Algorithm::Synthid(w) => w.apply_traced(probs, context, prompt_len, options),
             Algorithm::Kgw(w) => w.apply_traced(probs, context, prompt_len, options),
             Algorithm::Unigram(w) => w.apply_traced(probs, options),
@@ -465,6 +557,7 @@ impl Watermark {
 
     pub fn new(config: &WatermarkConfig) -> anyhow::Result<Self> {
         let algorithm = match config.algorithm_config()? {
+            AlgorithmConfig::Textgrain(c) => Algorithm::Textgrain(textgrain::TextGrain::new(&c)?),
             AlgorithmConfig::Synthid(c) => {
                 Algorithm::Synthid(synthid::SynthIdText::with_domain(&c, HASH_DOMAIN)?)
             }
@@ -498,6 +591,11 @@ impl Watermark {
             .checked_sub(prompt_len)
             .ok_or_else(|| candle_core::Error::Msg("prompt_len exceeds token count".into()))?;
         let token = match &self.algorithm {
+            Algorithm::Textgrain(w) => {
+                w.apply(probs, context, prompt_len)
+                    .map_err(candle_core::Error::wrap)?;
+                None
+            }
             Algorithm::Synthid(w) => {
                 w.apply(probs, context, prompt_len)
                     .map_err(candle_core::Error::wrap)?;
@@ -547,6 +645,12 @@ impl Watermark {
             .ok_or_else(|| candle_core::Error::Msg("prompt_len exceeds token count".into()))?;
         let device = probs.device();
         let prepared = match &self.algorithm {
+            Algorithm::Textgrain(w) => {
+                return Ok(WatermarkTensor::Probabilities(
+                    w.prepare_tensor(probs.dims1()?, context, prompt_len, device)?
+                        .apply_trusted(probs)?,
+                ))
+            }
             Algorithm::Synthid(w) => {
                 w.prepare_tensor(probs.dims1()?, context, prompt_len, device)?
             }
@@ -587,6 +691,12 @@ impl Watermark {
             .checked_sub(prompt_len)
             .ok_or_else(|| candle_core::Error::Msg("prompt_len exceeds token count".into()))?;
         let prepared = match &self.algorithm {
+            Algorithm::Textgrain(w) => {
+                return Ok(WatermarkTensor::Probabilities(
+                    w.prepare_indexed(candidates, context, prompt_len)?
+                        .apply_trusted(probs)?,
+                ))
+            }
             Algorithm::Synthid(w) => w.prepare_indexed(candidates, context, prompt_len)?,
             Algorithm::Kgw(w) => w.prepare_indexed(candidates, context, prompt_len)?,
             Algorithm::Unigram(w) => w.prepare_indexed(candidates)?,
@@ -619,6 +729,16 @@ impl Watermark {
         eos: &[u32],
     ) -> anyhow::Result<WatermarkEvidence> {
         Ok(match &self.algorithm {
+            Algorithm::Textgrain(w) => {
+                let e = w.detect(tokens, prompt_len, eos)?;
+                WatermarkEvidence::Textgrain {
+                    tokens_scored: e.tokens_scored,
+                    score_sum: e.score_sum,
+                    mean_score: e.mean_score,
+                    p_value: e.p_value,
+                    log_p_value: e.log_p_value,
+                }
+            }
             Algorithm::Synthid(w) => {
                 let e = w.detect(tokens, prompt_len, eos)?;
                 WatermarkEvidence::Synthid {
@@ -692,6 +812,13 @@ fn position(start: usize, generated: usize, period: usize) -> usize {
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub enum WatermarkEvidence {
+    Textgrain {
+        tokens_scored: usize,
+        score_sum: f64,
+        mean_score: Option<f64>,
+        p_value: Option<f64>,
+        log_p_value: Option<f64>,
+    },
     Synthid {
         tokens_scored: usize,
         mean_g_value: Option<f64>,
@@ -760,6 +887,14 @@ pub(crate) struct RequestWatermark {
 }
 
 impl RequestWatermark {
+    pub(crate) fn uses_textgrain_sampling(&self) -> bool {
+        self.config.uses_textgrain_sampling()
+    }
+
+    pub(crate) fn uses_explicit_sampling(&self) -> bool {
+        self.config.uses_explicit_sampling()
+    }
+
     pub(crate) fn uses_tournament(&self) -> bool {
         self.config.uses_tournament()
     }
@@ -785,7 +920,7 @@ impl RequestWatermark {
     pub(crate) fn new(config: &WatermarkConfig) -> anyhow::Result<Self> {
         config.validate_generation()?;
         let inner = OnceLock::new();
-        if config.uses_tournament() {
+        if config.uses_explicit_sampling() {
             let _ = inner.set(Watermark::new(config)?);
         }
         Ok(Self {
@@ -821,11 +956,12 @@ pub(crate) mod tests {
             "exponential",
             "inverse_transform",
             "mpac",
+            "textgrain",
         ]
         .into_iter()
         .map(|scheme| {
             let mut value = serde_json::json!({"scheme": scheme, "key": "42".repeat(32)});
-            if scheme != "synthid" {
+            if !matches!(scheme, "synthid" | "textgrain") {
                 value["vocab_size"] = vocab_size.into();
             }
             if scheme == "mpac" {

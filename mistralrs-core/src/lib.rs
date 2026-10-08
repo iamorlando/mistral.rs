@@ -230,8 +230,9 @@ pub use utils::memory_usage::MemoryUsage;
 pub use utils::normal::{ModelDType, TryIntoDType};
 pub use utils::{paged_attn_supported, using_flash_attn};
 pub use watermark::{
-    SynthIdGenerationPolicy, SynthIdTextWatermark, SynthIdTextWatermarkConfig, Watermark,
-    WatermarkConfig, WatermarkDetection, WatermarkEvidence, WatermarkTensor,
+    SynthIdGenerationPolicy, SynthIdTextWatermark, SynthIdTextWatermarkConfig,
+    TextGrainGenerationPolicy, Watermark, WatermarkConfig, WatermarkDetection, WatermarkEvidence,
+    WatermarkTensor,
 };
 
 // re-export llguidance for easier LlguidanceGrammar construction

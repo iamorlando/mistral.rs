@@ -51,7 +51,7 @@ __init__(
 ) -> None
 ```
 
-Schemes: synthid, kgw, unigram, exponential, inverse_transform, mpac, semstamp.
+Schemes: synthid, kgw, unigram, exponential, inverse_transform, mpac, textgrain, semstamp.
 
 Parameters match the [watermark configuration](/guides/customize/watermarking/).
 SemStamp requires sentence embeddings and cannot be used for token generation.
