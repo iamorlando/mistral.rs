@@ -1,5 +1,6 @@
 #![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 
+use super::memory::MetalMemoryGuard;
 /// Mistral LLM, https://github.com/mistralai/mistral-src
 use super::shared_prefix::SharedPrefixBatch;
 use crate::layers_masker::CausalMaskConfig;
@@ -23,6 +24,11 @@ use crate::{
     serde_default_fn,
     utils::{progress::NiceProgressBar, unvarbuilder::UnVarBuilder},
 };
+
+const HIDDEN_WORKSPACE_BUFFERS: usize = 4;
+const MLP_WORKSPACE_BUFFERS: usize = 3;
+const QKV_WORKSPACE_BUFFERS: usize = 2;
+const ATTENTION_SCORE_WORKSPACE_BUFFERS: usize = 3;
 
 macro_rules! sliding_window {
     ($layer_idx:expr, $cfg:expr) => {
@@ -64,6 +70,24 @@ impl Config {
     pub(crate) fn head_dim(&self) -> usize {
         self.head_dim
             .unwrap_or(self.hidden_size / self.num_attention_heads)
+    }
+
+    pub(crate) fn workspace_size_elems(&self, batch_size: usize, seq_len: usize) -> usize {
+        let tokens = batch_size * seq_len;
+        let hidden = tokens * self.hidden_size;
+        let hidden_workspace = hidden * HIDDEN_WORKSPACE_BUFFERS;
+        let mlp = hidden_workspace + tokens * self.intermediate_size * MLP_WORKSPACE_BUFFERS;
+        let qkv =
+            tokens * (self.num_attention_heads + self.num_key_value_heads * 2) * self.head_dim();
+        let scores = batch_size
+            * self.num_attention_heads
+            * seq_len
+            * seq_len.min(crate::attention::ATTENTION_CHUNK_SIZE);
+        mlp.max(
+            hidden_workspace
+                + qkv * QKV_WORKSPACE_BUFFERS
+                + scores * ATTENTION_SCORE_WORKSPACE_BUFFERS,
+        )
     }
 }
 
@@ -297,6 +321,8 @@ pub struct Model {
     sliding_window: Option<usize>,
     device: Device,
     mapper: Box<dyn DeviceMapper + Send + Sync>,
+    workspace_config: Config,
+    metal_memory: MetalMemoryGuard,
     #[allow(dead_code)]
     cfg: ModelConfigMetadata,
 }
@@ -352,17 +378,17 @@ impl Model {
             let device = mapper
                 .device_for(layer_idx, false)
                 .unwrap_or(&normal_loading_metadata.real_device);
-            ropes.insert(
-                device.location(),
-                Arc::new(RotaryEmbedding::new(
+            if let std::collections::hash_map::Entry::Vacant(entry) = ropes.entry(device.location())
+            {
+                entry.insert(Arc::new(RotaryEmbedding::new(
                     cfg.rope_theta as f32,
                     head_dim,
                     cfg.max_position_embeddings,
                     device,
                     is_gptx,
                     vb_m.dtype(),
-                )?),
-            );
+                )?));
+            }
         }
 
         let vb_l = vb_m.pp("layers");
@@ -396,6 +422,7 @@ impl Model {
             mapper.set_nm_device(vb_m.pp("norm"), false),
         )?;
 
+        let metal_memory = MetalMemoryGuard::new(&mapper.get_unique_devices())?;
         Ok(Self {
             embed_tokens,
             layers,
@@ -416,6 +443,8 @@ impl Model {
                 kv_cache_layout: crate::paged_attention::KvCacheLayout::Standard,
             },
             mapper,
+            workspace_config: cfg.clone(),
+            metal_memory,
         })
     }
 
@@ -457,9 +486,16 @@ impl Model {
         positions: &Tensor,
         flash_params: &FlashParams,
     ) -> Result<Tensor> {
+        let (batch_size, seq_len, _) = xs.dims3()?;
+        let workspace_bytes = self
+            .workspace_config
+            .workspace_size_elems(batch_size, seq_len)
+            * self.dtype.size_in_bytes();
         let attention_mask = DeviceMappedMask::new(attention_mask, &*self.mapper)?;
         for (i, layer) in self.layers.iter().enumerate() {
             xs = self.mapper.map(xs, i)?;
+            self.metal_memory
+                .reclaim_if_needed(xs.device(), workspace_bytes)?;
             xs = layer.forward(
                 &xs,
                 &attention_mask.get(xs.device()),

@@ -29,7 +29,12 @@ fn assert_close(actual: &Value, expected: &Value, tolerance: f64) {
     }
 }
 
-async fn check_clm(device: Device, tolerance: f64) -> anyhow::Result<()> {
+async fn check_clm(
+    device: Device,
+    tolerance: f64,
+    mapper: DeviceMapSetting,
+    dtype: DType,
+) -> anyhow::Result<()> {
     let model_id = fixture().to_string_lossy().into_owned();
     let loader = AutoLoaderBuilder::new(
         Default::default(),
@@ -45,10 +50,10 @@ async fn check_clm(device: Device, tolerance: f64) -> anyhow::Result<()> {
     let pipeline = loader.load_model_from_hf(
         None,
         TokenSource::None,
-        &DType::F32,
+        &dtype,
         &device,
         true,
-        DeviceMapSetting::dummy(),
+        mapper.clone(),
         None,
         None,
     )?;
@@ -109,10 +114,10 @@ async fn check_clm(device: Device, tolerance: f64) -> anyhow::Result<()> {
     let independent = loader.load_model_from_hf(
         None,
         TokenSource::None,
-        &DType::F32,
+        &dtype,
         &device,
         true,
-        DeviceMapSetting::dummy(),
+        mapper,
         None,
         None,
     )?;
@@ -144,17 +149,38 @@ async fn check_clm(device: Device, tolerance: f64) -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn clm_cpu_matches_pytorch_encoder_and_heads() -> anyhow::Result<()> {
-    check_clm(Device::Cpu, 2e-5).await
+    check_clm(Device::Cpu, 2e-5, DeviceMapSetting::dummy(), DType::F32).await
 }
 
 #[cfg(feature = "metal")]
 #[tokio::test]
 async fn clm_metal_matches_pytorch_encoder_and_heads() -> anyhow::Result<()> {
-    check_clm(Device::new_metal(0)?, 2e-4).await
+    check_clm(
+        Device::new_metal(0)?,
+        2e-4,
+        DeviceMapSetting::dummy(),
+        DType::F32,
+    )
+    .await
+}
+
+#[cfg(feature = "metal")]
+#[tokio::test]
+async fn clm_metal_cpu_offloading_preserves_bf16_decisions() -> anyhow::Result<()> {
+    let mapper = DeviceMapSetting::Map(mistralrs_core::DeviceMapMetadata::from_num_device_layers(
+        vec![],
+    ));
+    check_clm(Device::new_metal(0)?, 1e-2, mapper, DType::BF16).await
 }
 
 #[cfg(feature = "cuda")]
 #[tokio::test]
 async fn clm_cuda_matches_pytorch_encoder_and_heads() -> anyhow::Result<()> {
-    check_clm(Device::new_cuda(0)?, 2e-4).await
+    check_clm(
+        Device::new_cuda(0)?,
+        2e-4,
+        DeviceMapSetting::dummy(),
+        DType::F32,
+    )
+    .await
 }

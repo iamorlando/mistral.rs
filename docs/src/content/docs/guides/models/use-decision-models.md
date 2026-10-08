@@ -22,6 +22,14 @@ CPU execution is also supported. The full encoder needs the usual 8B-model
 memory. In-situ quantization can reduce encoder memory, but changes its
 embeddings and can affect decision quality.
 
+Automatic device mapping reserves encoder workspace and uses CPU layers when
+the weights and workspace exceed the GPU budget. On Apple Silicon, GPU and CPU
+allocations are counted against the same physical RAM. Cold requests reduce
+their encoder batch size when GPU memory is tight, and Metal reclaims unused
+scratch buffers between layers under memory pressure. Larger GPUs keep the
+normal batches and asynchronous execution. These adjustments preserve model
+weights and precision; CPU offloading can increase latency.
+
 The trained heads require **Qwen3-8B**, not Qwen3-Embedding-8B or another encoder.
 Model loading verifies the encoder identity in the head checkpoint and its
 hidden dimension. Loading a different model under the same local directory
@@ -159,7 +167,8 @@ The implementation follows the [CLM reference implementation](https://github.com
 Encoder inference reuses mistral's Qwen3 embedding implementation, device
 mapping, and quantization. Cache misses are sorted into batches of up to 32
 texts, bounded by 2048 padded token positions and a maximum 4:1 token-length
-ratio. Each text is pooled at its true last token. Heads run in float32 on the
+ratio. The padded-token budget decreases when available GPU memory cannot hold
+the normal encoder workspace. Each text is pooled at its true last token. Heads run in float32 on the
 encoder's output device and project cache misses in batches. Encoder embeddings
 and projections stay on device; final candidate logits are copied to the host
 once per request for answer construction. Requests use
@@ -207,7 +216,8 @@ CLM_ACTION_CACHE=0 mistralrs serve -m Contrastive-LM/CLM-v0.1-8B -p 1234
 
 Sizes accept B, KB, MB, GB, KiB, MiB, and GiB. A bare fraction uses the device's
 reported memory budget; `0` disables caching. GPU reservation is capped at 90%
-of memory available after loading; CPU uses the configured size. The arena
+of memory available after loading, with an additional reserve for encoder
+workspace; CPU uses the configured size. The arena
 never grows. Least-recently-used
 entries are evicted; requests larger than the cache still complete using their
 freshly computed vectors. Cache keys use SHA-256 of the rendered text and

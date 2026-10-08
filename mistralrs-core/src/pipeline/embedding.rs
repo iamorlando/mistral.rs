@@ -39,8 +39,8 @@ use crate::utils::{
 use crate::Modalities;
 use crate::SupportedModality;
 use crate::{
-    get_uqff_paths, DeviceMapSetting, PagedAttentionConfig, Pipeline, Topology, TryIntoDType,
-    GLOBAL_HF_CACHE,
+    get_uqff_paths, AutoDeviceMapParams, DeviceMapSetting, PagedAttentionConfig, Pipeline,
+    Topology, TryIntoDType, GLOBAL_HF_CACHE,
 };
 use anyhow::Context;
 use anyhow::Result;
@@ -345,6 +345,14 @@ impl Loader for EmbeddingLoader {
                 nm_device: available_devices[0].clone(),
             };
         } else if let DeviceMapSetting::Auto(params) = mapper.clone() {
+            let params = if self.clm.is_some() {
+                AutoDeviceMapParams::Text {
+                    max_seq_len: CLM_MAX_TOKENS,
+                    max_batch_size: 1,
+                }
+            } else {
+                params
+            };
             // Initial dtype
             let dtype = dtype.try_into_dtype(&available_devices.iter().collect::<Vec<_>>())?;
 
@@ -455,17 +463,26 @@ impl Loader for EmbeddingLoader {
                     }
                 };
 
-            let new = auto_device_map::get_device_layers(
-                &*self.inner,
-                &config,
-                self.inner.num_layers(&config)?,
-                layer_sizes_in_bytes,
-                non_mapped_size_in_bytes,
-                total_model_size_in_bytes,
-                &available_devices,
-                dtype,
-                &params,
-                paged_attn_config.as_mut(),
+            let new = auto_device_map::get_device_layers_with_memory(
+                auto_device_map::DeviceMapInputs {
+                    loader: &*self.inner,
+                    config: &config,
+                    num_layers: self.inner.num_layers(&config)?,
+                    layer_sizes_in_bytes,
+                    non_mapped_size_in_bytes,
+                    total_model_size_in_bytes,
+                    devices: &available_devices,
+                    dtype,
+                    params: &params,
+                    paged_attn_config: paged_attn_config.as_mut(),
+                },
+                &|device| {
+                    Ok(if self.clm.is_some() {
+                        crate::embedding_models::memory::encoder_memory_usage(device)?
+                    } else {
+                        crate::MemoryUsage.query(device)?
+                    })
+                },
             )?;
             mapper = DeviceMapSetting::Map(new);
         }
@@ -745,7 +762,23 @@ impl Loader for EmbeddingLoader {
                     &clm.config,
                     model.device(),
                 )?;
-                ClmInference::new(heads, model.device())
+                let encoder_config: crate::embedding_models::qwen3_embedding::Config =
+                    serde_json::from_str(&config)?;
+                let bytes_per_token = encoder_config.workspace_size_elems(1, CLM_MAX_TOKENS)
+                    / CLM_MAX_TOKENS
+                    * dtype.size_in_bytes();
+                let mut devices = pipeline_mapper.get_unique_devices();
+                if !devices
+                    .iter()
+                    .any(|device| device.same_device(model.device()))
+                {
+                    devices.push(model.device().clone());
+                }
+                ClmInference::new(
+                    heads,
+                    model.device(),
+                    crate::embedding_models::memory::EncoderMemory::new(devices, bytes_per_token)?,
+                )
             })
             .transpose()?;
         let tracked_modules = tracker.get().clone();
